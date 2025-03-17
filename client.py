@@ -26,6 +26,7 @@ client_id = uuid.uuid4()
 address = config["rabbit"]["address"]
 username = config["rabbit"]["username"]
 password = config["rabbit"]["password"]
+virtual_host = config["rabbit"]["virtual-host"]
 
 device = None
 
@@ -41,7 +42,7 @@ else:
     print(f"Using device: {device}")
 
 credentials = pika.PlainCredentials(username, password)
-connection = pika.BlockingConnection(pika.ConnectionParameters(address, 5672, '/', credentials))
+connection = pika.BlockingConnection(pika.ConnectionParameters(address, 5672, f'{virtual_host}', credentials))
 channel = connection.channel()
 
 if args.performance is None:

@@ -80,15 +80,16 @@ class RpcClient:
             if self.model is None:
                 klass = getattr(src.Model, model_name)
                 full_model = klass()
-
-                if cut_layers:
+                print(cut_layers)
+                if cut_layers[1] != 0:
                     from_layer = cut_layers[0]
                     to_layer = cut_layers[1]
                     if to_layer == -1:
                         self.model = nn.Sequential(*nn.ModuleList(full_model.children())[from_layer:])
                     else:
                         self.model = nn.Sequential(*nn.ModuleList(full_model.children())[from_layer:to_layer])
-
+                else:
+                    self.model = nn.Sequential(*nn.ModuleList(full_model.children())[:])
                 self.model.to(self.device)
 
             # Read parameters and load to model
@@ -108,8 +109,10 @@ class RpcClient:
 
                 subset = torch.utils.data.Subset(self.train_set, selected_indices)
                 train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
-
-                result, size = self.train_func(self.model, lr, momentum, num_layers, control_count, train_loader, self.cluster, special)
+                if cut_layers[1] != 0:
+                    result, size = self.train_func(self.model, lr, momentum, num_layers, control_count, train_loader, self.cluster, special, alone_train=False)
+                else:
+                    result, size = self.train_func(self.model, lr, momentum, num_layers, control_count, train_loader, self.cluster, special, alone_train=True)
             else:
                 result, size = self.train_func(self.model, lr, momentum, num_layers, control_count, None, self.cluster, special)
 

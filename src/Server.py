@@ -3,72 +3,29 @@ import random
 import pika
 import pickle
 import sys
-import yaml
 import numpy as np
 import torch
 import torch.nn as nn
-import requests
 import copy
-
-from requests.auth import HTTPBasicAuth
-
 import src.Model
 import src.Log
 import src.Utils
 from src.Cluster import clustering_algorithm
 import src.Validation
 
-num_labels = 10
-
-
-def delete_old_queues(address, username, password):
-    url = f'http://{address}:15672/api/queues'
-    response = requests.get(url, auth=HTTPBasicAuth(username, password))
-
-    if response.status_code == 200:
-        queues = response.json()
-
-        credentials = pika.PlainCredentials(username, password)
-        connection = pika.BlockingConnection(pika.ConnectionParameters(address, 5672, '/', credentials))
-        http_channel = connection.channel()
-
-        for queue in queues:
-            queue_name = queue['name']
-            if queue_name.startswith("reply") or queue_name.startswith("intermediate_queue") or queue_name.startswith(
-                    "gradient_queue") or queue_name.startswith("rpc_queue"):
-                try:
-                    http_channel.queue_delete(queue=queue_name)
-                    src.Log.print_with_color(f"Queue '{queue_name}' deleted.", "green")
-                except Exception as e:
-                    src.Log.print_with_color(f"Failed to delete queue '{queue_name}': {e}", "yellow")
-            else:
-                try:
-                    http_channel.queue_purge(queue=queue_name)
-                    src.Log.print_with_color(f"Queue '{queue_name}' purged.", "green")
-                except Exception as e:
-                    src.Log.print_with_color(f"Failed to purge queue '{queue_name}': {e}", "yellow")
-
-        connection.close()
-        return True
-    else:
-        src.Log.print_with_color(
-            f"Failed to fetch queues from RabbitMQ Management API. Status code: {response.status_code}", "yellow")
-        return False
-
 
 class Server:
-    def __init__(self, config_dir):
-        with open(config_dir, 'r') as file:
-            config = yaml.safe_load(file)
-
+    def __init__(self, config):
+        # RabbitMQ
         address = config["rabbit"]["address"]
         username = config["rabbit"]["username"]
         password = config["rabbit"]["password"]
-        delete_old_queues(address, username, password)
+        virtual_host = config["rabbit"]["virtual-host"]
 
+        self.partition = config["server"]["cluster"]
         self.model_name = config["server"]["model"]
         self.total_clients = config["server"]["clients"]
-        self.cut_layers = config["server"]["cut_layers"]
+        self.list_cut_layers = [config["server"]["no-cluster"]["cut-layers"]]
         self.local_round = config["server"]["local-round"]
         self.global_round = config["server"]["global-round"]
         self.round = self.global_round
@@ -87,11 +44,12 @@ class Server:
         self.client_cluster_config = config["server"]["client-cluster"]
         self.mode_cluster = self.client_cluster_config["enable"]
         self.special = self.client_cluster_config["special"]
+        self.mode_partition = self.client_cluster_config["auto-partition"]
         if not self.mode_cluster:
             self.local_round = 1
 
-        # Data non-iid
-        self.data_mode = config["server"]["data-mode"]
+        # Data distribution
+        self.num_label = self.data_distribution["num-label"]
         self.data_range = self.data_distribution["num-data-range"]
         self.non_iid_rate = self.data_distribution["non-iid-rate"]
         self.refresh_each_round = self.data_distribution["refresh-each-round"]
@@ -103,9 +61,8 @@ class Server:
         log_path = config["log_path"]
 
         credentials = pika.PlainCredentials(username, password)
-        self.connection = pika.BlockingConnection(pika.ConnectionParameters(address, 5672, '/', credentials))
+        self.connection = pika.BlockingConnection(pika.ConnectionParameters(address, 5672, f'{virtual_host}', credentials))
         self.channel = self.connection.channel()
-
         self.channel.queue_declare(queue='rpc_queue')
 
         self.current_clients = [0 for _ in range(len(self.total_clients))]
@@ -122,12 +79,11 @@ class Server:
         self.local_client_sizes = None
         self.local_avg_state_dict = None
         self.total_cluster_size = None
-        self.list_cut_layers = [self.cut_layers]
 
         self.label_counts = None
         self.non_iid_label = None
         if not self.refresh_each_round:
-            self.non_iid_label = [src.Utils.non_iid_rate(num_labels,
+            self.non_iid_label = [src.Utils.non_iid_rate(self.num_label,
                                                          self.non_iid_rate) for _ in range(self.total_clients[0])]
 
         self.num_cluster = None
@@ -145,25 +101,12 @@ class Server:
         self.logger.log_info(f"Application start. Server is waiting for {self.total_clients} clients.")
 
     def distribution(self):
-        if self.data_mode == "even":
-            # self.label_counts = np.array(
-            #     [[50 // self.total_clients[0] for _ in range(num_labels)] for _ in range(self.total_clients[0])])
-            self.label_counts = np.array(
-                [[250 for _ in range(num_labels)] for _ in range(self.total_clients[0])])
-        else:
-            if self.refresh_each_round:
-                self.non_iid_label = [src.Utils.non_iid_rate(num_labels, self.non_iid_rate) for _ in
-                                      range(self.total_clients[0])]
-            # self.label_counts = [np.array([random.randint(int(self.data_range[0] // self.non_iid_rate),
-            #                                               int(self.data_range[1] // self.non_iid_rate))
-            #                      for _ in range(num_labels)]) *
-            #                      self.non_iid_label[i] for i in range(self.total_clients[0])]
-            #
-
-            self.label_counts = [[50, 50, 50, 50, 50, 50, 50, 50, 50, 50],
-                                 [50, 50, 50, 50, 50, 50, 50, 50, 50, 50],
-                                 [50, 50, 50, 50, 50, 50, 50, 50, 50, 50],
-                                 [50, 50, 50, 50, 50, 50, 50, 50, 50, 50]]
+        if self.refresh_each_round:
+            self.non_iid_label = [src.Utils.non_iid_rate(self.num_label, self.non_iid_rate) for _ in
+                                  range(self.total_clients[0])]
+        self.label_counts = [
+            np.array([random.randint(self.data_range[0] // self.non_iid_rate, self.data_range[1] // self.non_iid_rate)
+                      for _ in range(self.num_label)]) * self.non_iid_label[i] for i in range(self.total_clients[0])]
 
     def on_request(self, ch, method, props, body):
         message = pickle.loads(body)
@@ -222,7 +165,7 @@ class Server:
             # self.distribution()
             data_message = message["message"]
             result = message["result"]
-            src.Log.print_with_color(f"[<<<] Received message from client: {data_message}", "blue")
+            src.Log.print_with_color(f"[<<<] Received message from {client_id}: {data_message}", "blue")
             cluster = message["cluster"]
             # Global update
             if self.current_local_training_round[cluster] == self.local_round - 1:
@@ -308,7 +251,6 @@ class Server:
 
     def notify_clients(self, start=True, register=True, cluster=None, special=False):
         label_counts = copy.copy(self.label_counts)
-        label_counts = label_counts.tolist()
         if cluster is not None and special is False:
             for (client_id, layer_id, _, clustering) in self.list_clients:
                 if clustering == cluster:
@@ -372,7 +314,10 @@ class Server:
                             full_model.load_state_dict(full_state_dict)
 
                             if layer_id == 1:
-                                model_part = nn.Sequential(*nn.ModuleList(full_model.children())[:layers[1]])
+                                if layers == [0, 0]:
+                                    model_part = nn.Sequential(*nn.ModuleList(full_model.children())[:])
+                                else:
+                                    model_part = nn.Sequential(*nn.ModuleList(full_model.children())[:layers[1]])
                             elif layer_id == len(self.total_clients):
                                 model_part = nn.Sequential(*nn.ModuleList(full_model.children())[layers[0]:])
                             else:
@@ -452,7 +397,12 @@ class Server:
             list_performance[idx] = performance
         # Phân cụm ở đây chỉ layer đầu
         if self.mode_cluster is True:
-            list_cluster, infor_cluster, num_cluster, list_cut_layers = clustering_algorithm(list_performance, self.total_clients[1], self.client_cluster_config)
+            self.logger.log_debug(f"mode_partition is {self.mode_partition}")
+            if self.mode_partition is True:
+                list_cluster, infor_cluster, num_cluster, list_cut_layers = clustering_algorithm(list_performance, self.total_clients[1], self.client_cluster_config, None)
+            else:
+                list_cluster, infor_cluster, num_cluster, list_cut_layers = clustering_algorithm(list_performance, self.total_clients[1], self.client_cluster_config, self.partition)
+
             self.infor_cluster = infor_cluster
             self.num_cluster = num_cluster
             self.list_cut_layers = list_cut_layers
@@ -496,36 +446,53 @@ class Server:
             num_models = len(state_dicts)
             if num_models == 0:
                 return
+
+            denominator = sum(local_layer_client_size)
+            if denominator == 0:
+                print(f"Warning: denominator is zero at layer {layer}, skipping...")
+                continue
+
             self.local_avg_state_dict[cluster][layer] = state_dicts[0]
 
             for key in state_dicts[0].keys():
+                for i in range(num_models):
+                    if torch.isnan(state_dicts[i][key]).any():
+                        print(f"Warning: NaN detected in {key} at model {i}, replacing with zero.")
+                        state_dicts[i][key] = torch.nan_to_num(state_dicts[i][key])
+
                 if state_dicts[0][key].dtype != torch.long:
                     self.local_avg_state_dict[cluster][layer][key] = sum(
-                        state_dicts[i][key] * local_layer_client_size[i]
-                        for i in range(num_models)) / sum(local_layer_client_size)
+                        state_dicts[i][key].float() * local_layer_client_size[i]
+                        for i in range(num_models)
+                    ) / denominator
                 else:
                     self.local_avg_state_dict[cluster][layer][key] = sum(
                         state_dicts[i][key] * local_layer_client_size[i]
-                        for i in range(num_models)) // sum(local_layer_client_size)
+                        for i in range(num_models)
+                    ) // denominator
 
     def concatenate_state_dict(self):
         state_dict_cluster = {}
         list_state_dict_cluster = [state_dict_cluster for _ in range(self.num_cluster)]
         for cluster in range(self.num_cluster):
-            for i, state_dicts in enumerate(self.local_avg_state_dict[cluster]):
-                if i > 0:
-                    state_dicts = src.Utils.change_state_dict(state_dicts, self.list_cut_layers[cluster][i - 1])
-                list_state_dict_cluster[cluster].update(state_dicts)
+            if self.list_cut_layers[cluster][0] != 0:
+                for i, state_dicts in enumerate(self.local_avg_state_dict[cluster]):
+                    if i > 0:
+                        state_dicts = src.Utils.change_state_dict(state_dicts, self.list_cut_layers[cluster][i - 1])
+                    list_state_dict_cluster[cluster].update(state_dicts)
+            else:
+                list_state_dict_cluster[cluster].update(self.local_avg_state_dict[cluster][0])
 
+        # Avg all cluster
         state_dict_full = list_state_dict_cluster[0]
         for key in list_state_dict_cluster[0].keys():
             if list_state_dict_cluster[0][key].dtype != torch.long:
                 state_dict_full[key] = sum(
-                    list_state_dict_cluster[i][key] * self.total_cluster_size[i]
-                    for i in range(self.num_cluster)) / sum(self.total_cluster_size)
+                    list_state_dict_cluster[i][key]
+                    for i in range(self.num_cluster)) / self.num_cluster
             else:
                 state_dict_full[key] = sum(
-                    list_state_dict_cluster[i][key] * self.total_cluster_size[i]
-                    for i in range(self.num_cluster)) // sum(self.total_cluster_size)
+                    list_state_dict_cluster[i][key]
+                    for i in range(self.num_cluster)) // self.num_cluster
 
         return state_dict_full

@@ -5,7 +5,7 @@ from requests.auth import HTTPBasicAuth
 import requests
 
 
-def delete_old_queues(address, username, password):
+def delete_old_queues(address, username, password, virtual_host):
     url = f'http://{address}:15672/api/queues'
     response = requests.get(url, auth=HTTPBasicAuth(username, password))
 
@@ -13,7 +13,7 @@ def delete_old_queues(address, username, password):
         queues = response.json()
 
         credentials = pika.PlainCredentials(username, password)
-        connection = pika.BlockingConnection(pika.ConnectionParameters(address, 5672, '/', credentials))
+        connection = pika.BlockingConnection(pika.ConnectionParameters(address, 5672, f'{virtual_host}', credentials))
         http_channel = connection.channel()
 
         for queue in queues:

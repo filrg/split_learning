@@ -30,7 +30,7 @@ else:
     print(f"Using device: {device}")
 
 model = src.Model.VGG16().to(device)
-batch_size = 128
+batch_size = 32
 test_round = 100
 if args.round:
     test_round = args.round

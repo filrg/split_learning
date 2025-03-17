@@ -62,19 +62,6 @@ class Scheduler:
             body=message
         )
 
-    def send_validation(self, data_id, data, trace):
-        to_client_id = trace[0]
-        backward_queue_name = f'gradient_queue_1_{to_client_id}'
-        self.channel.queue_declare(queue=backward_queue_name, durable=False)
-
-        message = pickle.dumps({"data_id": data_id, "data": data, "trace": trace, "test": True})
-
-        self.channel.basic_publish(
-            exchange='',
-            routing_key=backward_queue_name,
-            body=message
-        )
-
     def send_to_server(self, message):
         self.channel.queue_declare('rpc_queue', durable=False)
         self.channel.basic_publish(exchange='',
@@ -293,10 +280,43 @@ class Scheduler:
                     if received_data["action"] == "PAUSE":
                         return True
 
-    def train_on_device(self, model, lr, momentum, num_layers, control_count, train_loader=None, cluster=None, special=False):
+    def alone_training(self, model, lr, momentum, train_loader=None, cluster=None):
+        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+        criterion = nn.CrossEntropyLoss()
+        print('Waiting for training. To exit press CTRL+C')
+        for training_data, labels in tqdm(train_loader):
+            model.train()
+            optimizer.zero_grad()
+            training_data = training_data.to(self.device)
+            labels = labels.to(self.device)
+            output = model(training_data)
+            loss = criterion(output, labels)
+            loss.backward()
+            optimizer.step()
+            self.data_count += 1
+
+        notify_data = {"action": "NOTIFY", "client_id": self.client_id, "layer_id": self.layer_id,
+                       "message": "Finish training!", "cluster": cluster}
+        src.Log.print_with_color("[>>>] Finish training!", "red")
+        self.send_to_server(notify_data)
+
+        broadcast_queue_name = f'reply_{self.client_id}'
+        while True:  # Wait for broadcast
+            method_frame, header_frame, body = self.channel.basic_get(queue=broadcast_queue_name, auto_ack=True)
+            if body:
+                received_data = pickle.loads(body)
+                src.Log.print_with_color(f"[<<<] Received message from server {received_data}", "blue")
+                if received_data["action"] == "PAUSE":
+                    return True
+            time.sleep(0.5)
+
+    def train_on_device(self, model, lr, momentum, num_layers, control_count, train_loader=None, cluster=None, special=False, alone_train=False):
         self.data_count = 0
         if self.layer_id == 1:
-            result = self.train_on_first_layer(model, lr, momentum, control_count, train_loader, cluster, special)
+            if alone_train is False:
+                result = self.train_on_first_layer(model, lr, momentum, control_count, train_loader, cluster, special)
+            else:
+                result = self.alone_training(model, lr, momentum, train_loader=train_loader, cluster=cluster)
         elif self.layer_id == num_layers:
             result = self.train_on_last_layer(model, lr, momentum, cluster=cluster, special=special)
         else:
