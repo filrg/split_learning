@@ -74,34 +74,60 @@ Application configuration is in the `config.yaml` file:
 
 ```yaml
 name: Split Learning
-server:   # server configuration
-  num-round: 1  # number of training rounds
-  cut_layers:   # index of cutting layers 
-    - 10
-    - 20
-  clients:  # Layer 1 has 3 clients, layer 2 has 2 clients, layer 3 has 1 client
-    - 3
+server:  # server configuration
+  local-round: 1 
+  global-round: 1
+  clients: # all devices in system
     - 2
-    - 1
-  model: VGG16      # class name of DNN model
+    - 2 # layer 1 has 2 devices, layer 2 has 2 devices
+  no-cluster: 
+    cut-layers: [7] # general cut-point 
+  cluster: 
+    num-cluster: 1 # number of cluster
+    cut-layers:
+      - [7] # cut-point in cluster 0
+      - [14] # cut-point in cluster 1
+    infor-cluster:
+      - [1,1] # cluster 0 has 1 device in layer 1 and 1 client in layer 2
+      - [1,1] # cluster 1 has 1 device in layer 1 and 1 client in layer 2
+  model: VGG16 # model name
   parameters:
-    load: False     # allow to load parameters file
-    save: False     # allow to save parameters file
-                    # if turn on, server will be averaging all parameters
-  validation: True  # allow to validate on server-side
+    load: False  # allow to load parameters file
+    save: False # allow to save parameters file
+                # if turn on, server will be averaging all parameters
+  validation: False # allow to validate on server-side
+  data-distribution: # data distribution config
+    num-label: 10 # number of label in dataset
+    num-data-range: # minimum and maximum number of label's data
+      - 250
+      - 250
+    non-iid-rate: 1 # non-IID rate, range (0, 1]
+    refresh-each-round: True # if set True, non-IID on label will be reset on each round
+  random-seed: 1
+  client-cluster: # mode cluster configuration
+    enable: False # run cluster
+    auto-partition: False # use algorithm cluster
+    syn-cut-layers: False 
+    special: False # use mode only aggregate layer 1
+    cluster: AffinityPropagation # choose cluster algorithm 
+    AffinityPropagation: # cluster algorithm configuration
+      damping: 0.9
+      max_iter: 1000
 
-rabbit:   # RabbitMQ connection configuration
-  address: 127.0.0.1    # address
+rabbit: # RabbitMQ connection configuration
+  address: 127.0.0.1
   username: admin
   password: admin
+  virtual-host: \
 
-log_path: .   # logging directory
+log_path: .
+debug_mode: True
 
 learning:
   learning-rate: 0.01
   momentum: 0.5
-  batch-size: 256
-  control-count: 3    # control count on client
+  batch-size: 32
+  control-count: 3
 ```
 
 This configuration is use for server.
@@ -131,16 +157,16 @@ Now, when server is ready, run clients simultaneously with total number of clien
 **Layer 1**
 
 ```commandline
-python client.py --layer_id 1
+python client.py --layer_id 1 --performance 0
 ```
 
 Where:
 - `--layer_id` is the ID index of client's layer, start from 1.
-
+- `--performance` is the performance of device 
 If you want to use a specific device configuration for the training process, declare it with the `--device` argument when running the command line:
 
 ```commandline
-python client.py --layer_id 1 --device cpu
+python client.py --layer_id 1 --performance 0 --device cpu
 ```
 
 ## Parameter Files
