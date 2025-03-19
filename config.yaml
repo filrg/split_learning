@@ -40,7 +40,7 @@ rabbit:
   address: 127.0.0.1
   username: admin
   password: admin
-  virtual-host: \
+  virtual-host: /
 
 log_path: .
 debug_mode: True
@@ -50,3 +50,10 @@ learning:
   momentum: 0.5
   batch-size: 32
   control-count: 3
+  compute-loss:
+    mode: FedProx # normal /FedProx /ReBaFL
+    FedProx:
+      mu: 0.01
+    ReBaFL:
+      mu: 0.01
+      lambda_aug: 0.1

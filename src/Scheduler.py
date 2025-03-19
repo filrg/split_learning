@@ -6,6 +6,7 @@ from tqdm import tqdm
 import torch
 import torch.optim as optim
 import torch.nn as nn
+import torch.nn.functional as f
 
 import src.Log
 
@@ -22,7 +23,16 @@ class Scheduler:
         self.time_event_forward = []
         self.time_event_backward = []
 
-    def send_intermediate_output(self, data_id, output, labels, trace, test=False, cluster=None, special=False):
+    def balanced_softmax_loss(self, logits, labels, class_counts, epsilon=1e-6):
+        class_counts = torch.tensor(class_counts, dtype=torch.int64).to(self.device)
+        log_probs = f.log_softmax(logits, dim=1)
+        class_probs = class_counts / (class_counts.sum() + epsilon)
+        weights = 1.0 / (class_probs + epsilon)
+        weights = weights / weights.sum()
+        loss = (-weights[labels] * log_probs[range(labels.shape[0]), labels]).mean()
+        return loss
+
+    def send_intermediate_output(self, data_id, label_count, output, labels, trace, test=False, cluster=None, special=False):
         if special is True:
             forward_queue_name = f'intermediate_queue_{self.layer_id}'
         else:
@@ -32,12 +42,12 @@ class Scheduler:
         if trace:
             trace.append(self.client_id)
             message = pickle.dumps(
-                {"data_id": data_id, "data": output.detach().cpu().numpy(), "label": labels, "trace": trace,
+                {"data_id": data_id, "label_count": label_count, "data": output.detach().cpu().numpy(), "label": labels, "trace": trace,
                  "test": test}
             )
         else:
             message = pickle.dumps(
-                {"data_id": data_id, "data": output.detach().cpu().numpy(), "label": labels, "trace": [self.client_id],
+                {"data_id": data_id, "label_count": label_count, "data": output.detach().cpu().numpy(), "label": labels, "trace": [self.client_id],
                  "test": test}
             )
 
@@ -68,7 +78,8 @@ class Scheduler:
                                    routing_key='rpc_queue',
                                    body=pickle.dumps(message))
 
-    def train_on_first_layer(self, model, lr, momentum, control_count=5, train_loader=None, cluster=None, special=False):
+    def train_on_first_layer(self, model, global_model, label_count, lr, momentum, compute_loss, control_count=5,
+                             train_loader=None, cluster=None, special=False):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
         data_iter = iter(train_loader)
 
@@ -126,7 +137,7 @@ class Scheduler:
                         # tqdm bar
                         pbar.update(1)
 
-                        self.send_intermediate_output(data_id, intermediate_output, labels, trace=None, test=False, cluster=cluster, special=special)
+                        self.send_intermediate_output(data_id, label_count, intermediate_output, labels, trace=None, test=False, cluster=cluster, special=special)
 
                     except StopIteration:
                         end_data = True
@@ -150,7 +161,7 @@ class Scheduler:
                     return True
             time.sleep(0.5)
 
-    def train_on_last_layer(self, model, lr, momentum, cluster, special=False):
+    def train_on_last_layer(self, model, global_model, label_count, lr, momentum, compute_loss, cluster, special=False):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
         result = True
 
@@ -177,11 +188,28 @@ class Scheduler:
                 trace = received_data["trace"]
                 data_id = received_data["data_id"]
                 labels = received_data["label"].to(self.device)
+                label_count = received_data["label_count"]
 
                 intermediate_output = torch.tensor(intermediate_output_numpy, requires_grad=True).to(self.device)
 
                 output = model(intermediate_output)
-                loss = criterion(output, labels)
+
+                # choose loss mode
+                if compute_loss["mode"] == 'FedProx':
+                    loss = criterion(output, labels)
+                    prox_term = 0.0
+                    for param, global_param in zip(model.parameters(), global_model.parameters()):
+                        prox_term += torch.norm(param - global_param, p=2)
+                    loss += (compute_loss["FedProx"]["mu"] / 2) * prox_term
+                elif compute_loss["mode"] == 'ReBaFL':
+                    loss = self.balanced_softmax_loss(output, labels, label_count)
+                    prox_term = sum(torch.norm(param - global_param, p=2) for param, global_param in
+                                    zip(model.parameters(), global_model.parameters()))
+                    loss += (compute_loss["ReBaFL"]["mu"] / 2) * prox_term
+                    feature_aug_loss = compute_loss["ReBaFL"]["lambda_aug"] * torch.norm(output.mean(dim=0) - global_model(intermediate_output).mean(dim=0), p=2)
+                    loss += feature_aug_loss
+                else:
+                    loss = criterion(output, labels)
                 print(f"Loss: {loss.item()}")
                 if torch.isnan(loss).any():
                     src.Log.print_with_color("NaN detected in loss", "yellow")
@@ -209,7 +237,7 @@ class Scheduler:
                     if received_data["action"] == "PAUSE":
                         return result
 
-    def train_on_middle_layer(self, model, lr, momentum, control_count=5, cluster=None, special=False):
+    def train_on_middle_layer(self, model, global_model, label_count, lr, momentum, compute_loss, control_count=5, cluster=None, special=False):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
 
         forward_queue_name = f'intermediate_queue_{self.layer_id - 1}'
@@ -256,6 +284,7 @@ class Scheduler:
                     data_id = received_data["data_id"]
                     test = received_data["test"]
                     labels = received_data["label"].to(self.device)
+                    label_count = received_data["label_count"]
 
                     intermediate_output = torch.tensor(intermediate_output_numpy, requires_grad=True).to(self.device)
                     data_store[data_id] = intermediate_output
@@ -266,7 +295,7 @@ class Scheduler:
                     self.data_count += 1
                     if self.event_time:
                         self.time_event_forward.append(time.time())
-                    self.send_intermediate_output(data_id, output, labels, trace, test, cluster=cluster, special=special)
+                    self.send_intermediate_output(data_id, label_count, output, labels, trace, test, cluster=cluster, special=special)
                     # speed control
                     if len(data_store) > control_count:
                         continue
@@ -280,7 +309,7 @@ class Scheduler:
                     if received_data["action"] == "PAUSE":
                         return True
 
-    def alone_training(self, model, lr, momentum, train_loader=None, cluster=None):
+    def alone_training(self, model, global_model, label_count, lr, momentum, compute_loss, train_loader=None, cluster=None):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
         criterion = nn.CrossEntropyLoss()
         print('Waiting for training. To exit press CTRL+C')
@@ -290,7 +319,24 @@ class Scheduler:
             training_data = training_data.to(self.device)
             labels = labels.to(self.device)
             output = model(training_data)
-            loss = criterion(output, labels)
+
+            if compute_loss["mode"] == 'FedProx':
+                loss = criterion(output, labels)
+                prox_term = 0.0
+                for param, global_param in zip(model.parameters(), global_model.parameters()):
+                    prox_term += torch.norm(param - global_param, p=2)
+                loss += (compute_loss["FedProx"]["mu"] / 2) * prox_term
+            elif compute_loss["mode"] == 'ReBaFL':
+                loss = self.balanced_softmax_loss(output, labels, label_count)
+                prox_term = sum(torch.norm(param - global_param, p=2) for param, global_param in
+                                zip(model.parameters(), global_model.parameters()))
+                loss += (compute_loss["ReBaFL"]["mu"] / 2) * prox_term
+                feature_aug_loss = compute_loss["ReBaFL"]["lambda_aug"] * torch.norm(
+                    output.mean(dim=0) - global_model(training_data).mean(dim=0), p=2)
+                loss += feature_aug_loss
+            else:
+                loss = criterion(output, labels)
+
             loss.backward()
             optimizer.step()
             self.data_count += 1
@@ -310,17 +356,17 @@ class Scheduler:
                     return True
             time.sleep(0.5)
 
-    def train_on_device(self, model, lr, momentum, num_layers, control_count, train_loader=None, cluster=None, special=False, alone_train=False):
+    def train_on_device(self, model, global_model, label_count, lr, momentum, compute_loss, num_layers, control_count, train_loader=None, cluster=None, special=False, alone_train=False):
         self.data_count = 0
         if self.layer_id == 1:
             if alone_train is False:
-                result = self.train_on_first_layer(model, lr, momentum, control_count, train_loader, cluster, special)
+                result = self.train_on_first_layer(model, global_model, label_count, lr, momentum, compute_loss, control_count, train_loader, cluster, special)
             else:
-                result = self.alone_training(model, lr, momentum, train_loader=train_loader, cluster=cluster)
+                result = self.alone_training(model, global_model, label_count, lr, momentum, compute_loss, train_loader=train_loader, cluster=cluster)
         elif self.layer_id == num_layers:
-            result = self.train_on_last_layer(model, lr, momentum, cluster=cluster, special=special)
+            result = self.train_on_last_layer(model, global_model, label_count, lr, momentum, compute_loss, cluster=cluster, special=special)
         else:
-            result = self.train_on_middle_layer(model, lr, momentum, control_count, cluster=cluster, special=special)
+            result = self.train_on_middle_layer(model, global_model, label_count, lr, momentum, compute_loss, control_count, cluster=cluster, special=special)
         if self.event_time:
             src.Log.print_with_color(f"Forward training time events {self.time_event_forward}", "yellow")
             src.Log.print_with_color(f"Backward Training time events {self.time_event_backward}", "yellow")

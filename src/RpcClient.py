@@ -2,6 +2,7 @@ import time
 import pickle
 import pika
 import random
+import copy
 import torch
 import torchvision
 import torchvision.transforms as transforms
@@ -27,6 +28,7 @@ class RpcClient:
         self.connection = None
         self.response = None
         self.model = None
+        self.global_model = None
         self.cluster = None
         self.label_count = None
         self.connect()
@@ -92,14 +94,17 @@ class RpcClient:
                     self.model = nn.Sequential(*nn.ModuleList(full_model.children())[:])
                 self.model.to(self.device)
 
-            # Read parameters and load to model
-            if state_dict:
-                self.model.load_state_dict(state_dict)
-
             batch_size = self.response["batch_size"]
             lr = self.response["lr"]
             momentum = self.response["momentum"]
+            compute_loss = self.response["compute_loss"]
             control_count = self.response["control_count"]
+
+            # Read parameters and load to model
+            if state_dict:
+                self.model.load_state_dict(state_dict)
+            if self.response["cluster"] is not None and compute_loss["mode"] != 'normal':
+                self.global_model = copy.copy(self.model)
 
             # Start training
             if self.layer_id == 1:
@@ -110,11 +115,11 @@ class RpcClient:
                 subset = torch.utils.data.Subset(self.train_set, selected_indices)
                 train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
                 if cut_layers[1] != 0:
-                    result, size = self.train_func(self.model, lr, momentum, num_layers, control_count, train_loader, self.cluster, special, alone_train=False)
+                    result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=False)
                 else:
-                    result, size = self.train_func(self.model, lr, momentum, num_layers, control_count, train_loader, self.cluster, special, alone_train=True)
+                    result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=True)
             else:
-                result, size = self.train_func(self.model, lr, momentum, num_layers, control_count, None, self.cluster, special)
+                result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, compute_loss, num_layers, control_count, None, self.cluster, special)
 
             # Stop training, then send parameters to server
             model_state_dict = self.model.state_dict()

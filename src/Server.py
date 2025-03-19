@@ -38,6 +38,7 @@ class Server:
         self.lr = config["learning"]["learning-rate"]
         self.momentum = config["learning"]["momentum"]
         self.control_count = config["learning"]["control-count"]
+        self.compute_loss = config["learning"]["compute-loss"]
         self.data_distribution = config["server"]["data-distribution"]
 
         # Cluster
@@ -272,6 +273,7 @@ class Server:
                                     "batch_size": self.batch_size,
                                     "lr": self.lr,
                                     "momentum": self.momentum,
+                                    "compute_loss": self.compute_loss,
                                     "label_count": None,
                                     "cluster": None,
                                     "special": False}
@@ -286,6 +288,7 @@ class Server:
                                     "batch_size": self.batch_size,
                                     "lr": self.lr,
                                     "momentum": self.momentum,
+                                    "compute_loss": self.compute_loss,
                                     "label_count": None,
                                     "cluster": None,
                                     "special": False}
@@ -340,6 +343,7 @@ class Server:
                                     "batch_size": self.batch_size,
                                     "lr": self.lr,
                                     "momentum": self.momentum,
+                                    "compute_loss": self.compute_loss,
                                     "label_count": label_counts.pop(),
                                     "cluster": clustering,
                                     "special": self.special}
@@ -354,6 +358,7 @@ class Server:
                                     "batch_size": self.batch_size,
                                     "lr": self.lr,
                                     "momentum": self.momentum,
+                                    "compute_loss": self.compute_loss,
                                     "label_count": None,
                                     "cluster": clustering,
                                     "special": self.special}
@@ -386,6 +391,7 @@ class Server:
                                     "batch_size": self.batch_size,
                                     "lr": self.lr,
                                     "momentum": self.momentum,
+                                    "compute_loss": self.compute_loss,
                                     "label_count": None,
                                     "cluster": None,
                                     "special": True}
