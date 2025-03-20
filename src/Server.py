@@ -50,11 +50,12 @@ class Server:
             self.local_round = 1
 
         # Data distribution
+        self.non_iid = self.data_distribution["non-iid"]
         self.num_label = self.data_distribution["num-label"]
-        self.data_range = self.data_distribution["num-data-range"]
-        self.non_iid_rate = self.data_distribution["non-iid-rate"]
+        self.num_sample = self.data_distribution["num-sample"]
         self.refresh_each_round = self.data_distribution["refresh-each-round"]
         self.random_seed = config["server"]["random-seed"]
+        self.label_counts = None
 
         if self.random_seed:
             random.seed(self.random_seed)
@@ -81,12 +82,6 @@ class Server:
         self.local_avg_state_dict = None
         self.total_cluster_size = None
 
-        self.label_counts = None
-        self.non_iid_label = None
-        if not self.refresh_each_round:
-            self.non_iid_label = [src.Utils.non_iid_rate(self.num_label,
-                                                         self.non_iid_rate) for _ in range(self.total_clients[0])]
-
         self.num_cluster = None
         self.current_local_training_round = None
         self.infor_cluster = None
@@ -102,12 +97,11 @@ class Server:
         self.logger.log_info(f"Application start. Server is waiting for {self.total_clients} clients.")
 
     def distribution(self):
-        if self.refresh_each_round:
-            self.non_iid_label = [src.Utils.non_iid_rate(self.num_label, self.non_iid_rate) for _ in
-                                  range(self.total_clients[0])]
-        self.label_counts = [
-            np.array([random.randint(self.data_range[0] // self.non_iid_rate, self.data_range[1] // self.non_iid_rate)
-                      for _ in range(self.num_label)]) * self.non_iid_label[i] for i in range(self.total_clients[0])]
+        if self.non_iid:
+            label_distribution = np.random.dirichlet([self.data_distribution["dirichlet"]["alpha"]] * self.num_label, self.total_clients[0])
+            self.label_counts = (label_distribution * self.num_sample).astype(int)
+        else:
+            self.label_counts = np.full((self.total_clients[0], self.num_label), self.num_sample // self.num_label)
 
     def on_request(self, ch, method, props, body):
         message = pickle.loads(body)
@@ -252,6 +246,7 @@ class Server:
 
     def notify_clients(self, start=True, register=True, cluster=None, special=False):
         label_counts = copy.copy(self.label_counts)
+        label_counts = label_counts.tolist()
         if cluster is not None and special is False:
             for (client_id, layer_id, _, clustering) in self.list_clients:
                 if clustering == cluster:

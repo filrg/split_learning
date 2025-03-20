@@ -15,15 +15,15 @@ server:
       - [1,1]
   model: VGG16
   parameters:
-    load: False
-    save: False
-  validation: False
+    load: True
+    save: True
+  validation: True
   data-distribution:
+    non-iid: True
+    num-sample: 5000
     num-label: 10
-    num-data-range:
-      - 250
-      - 250
-    non-iid-rate: 1
+    dirichlet:
+      alpha: 1
     refresh-each-round: True
   random-seed: 1
   client-cluster:
@@ -37,9 +37,9 @@ server:
       max_iter: 1000
 
 rabbit:
-  address: 127.0.0.1
-  username: admin
-  password: admin
+  address: 192.168.101.234
+  username: dai
+  password: dai
   virtual-host: /
 
 log_path: .
@@ -51,7 +51,7 @@ learning:
   batch-size: 32
   control-count: 3
   compute-loss:
-    mode: FedProx # normal /FedProx /ReBaFL
+    mode: normal # normal /FedProx /ReBaFL
     FedProx:
       mu: 0.01
     ReBaFL:
