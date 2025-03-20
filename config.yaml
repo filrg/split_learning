@@ -15,11 +15,11 @@ server:
       - [1,1]
   model: VGG16
   parameters:
-    load: True
-    save: True
-  validation: True
+    load: False
+    save: False
+  validation: False
   data-distribution:
-    non-iid: True
+    non-iid: False
     num-sample: 5000
     num-label: 10
     dirichlet:
@@ -37,9 +37,9 @@ server:
       max_iter: 1000
 
 rabbit:
-  address: 192.168.101.234
-  username: dai
-  password: dai
+  address: 127.0.0.1
+  username: admin
+  password: admin
   virtual-host: /
 
 log_path: .
