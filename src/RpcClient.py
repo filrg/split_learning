@@ -73,6 +73,7 @@ class RpcClient:
             cut_layers = self.response['layers']
             label_count = self.response['label_count']
             num_layers = self.response['num_layers']
+            clip_grad_norm = self.response['clip_grad_norm']
             if self.label_count is None:
                 self.label_count = label_count
             if self.response['cluster'] is not None:
@@ -115,11 +116,11 @@ class RpcClient:
                 subset = torch.utils.data.Subset(self.train_set, selected_indices)
                 train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
                 if cut_layers[1] != 0:
-                    result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=False)
+                    result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=False)
                 else:
-                    result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=True)
+                    result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=True)
             else:
-                result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, compute_loss, num_layers, control_count, None, self.cluster, special)
+                result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, None, self.cluster, special)
 
             # Stop training, then send parameters to server
             model_state_dict = self.model.state_dict()

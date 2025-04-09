@@ -78,7 +78,7 @@ class Scheduler:
                                    routing_key='rpc_queue',
                                    body=pickle.dumps(message))
 
-    def train_on_first_layer(self, model, global_model, label_count, lr, momentum, compute_loss, control_count=5,
+    def train_on_first_layer(self, model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, control_count=5,
                              train_loader=None, cluster=None, special=False):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
         data_iter = iter(train_loader)
@@ -161,7 +161,7 @@ class Scheduler:
                     return True
             time.sleep(0.5)
 
-    def train_on_last_layer(self, model, global_model, label_count, lr, momentum, compute_loss, cluster, special=False):
+    def train_on_last_layer(self, model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, cluster, special=False):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
         result = True
 
@@ -220,6 +220,8 @@ class Scheduler:
                     self.time_event_backward.append(time.time())
                 intermediate_output.retain_grad()
                 loss.backward()
+                if clip_grad_norm and clip_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
                 optimizer.step()
                 self.data_count += 1
 
@@ -237,7 +239,7 @@ class Scheduler:
                     if received_data["action"] == "PAUSE":
                         return result
 
-    def train_on_middle_layer(self, model, global_model, label_count, lr, momentum, compute_loss, control_count=5, cluster=None, special=False):
+    def train_on_middle_layer(self, model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, control_count=5, cluster=None, special=False):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
 
         forward_queue_name = f'intermediate_queue_{self.layer_id - 1}'
@@ -309,7 +311,7 @@ class Scheduler:
                     if received_data["action"] == "PAUSE":
                         return True
 
-    def alone_training(self, model, global_model, label_count, lr, momentum, compute_loss, train_loader=None, cluster=None):
+    def alone_training(self, model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, train_loader=None, cluster=None):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
         criterion = nn.CrossEntropyLoss()
         print('Waiting for training. To exit press CTRL+C')
@@ -336,8 +338,12 @@ class Scheduler:
                 loss += feature_aug_loss
             else:
                 loss = criterion(output, labels)
-
+            if torch.isnan(loss).any():
+                src.Log.print_with_color("NaN detected in loss", "yellow")
+                result = False
             loss.backward()
+            if clip_grad_norm and clip_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
             optimizer.step()
             self.data_count += 1
 
@@ -356,17 +362,17 @@ class Scheduler:
                     return True
             time.sleep(0.5)
 
-    def train_on_device(self, model, global_model, label_count, lr, momentum, compute_loss, num_layers, control_count, train_loader=None, cluster=None, special=False, alone_train=False):
+    def train_on_device(self, model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader=None, cluster=None, special=False, alone_train=False):
         self.data_count = 0
         if self.layer_id == 1:
             if alone_train is False:
-                result = self.train_on_first_layer(model, global_model, label_count, lr, momentum, compute_loss, control_count, train_loader, cluster, special)
+                result = self.train_on_first_layer(model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, control_count, train_loader, cluster, special)
             else:
-                result = self.alone_training(model, global_model, label_count, lr, momentum, compute_loss, train_loader=train_loader, cluster=cluster)
+                result = self.alone_training(model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, train_loader=train_loader, cluster=cluster)
         elif self.layer_id == num_layers:
-            result = self.train_on_last_layer(model, global_model, label_count, lr, momentum, compute_loss, cluster=cluster, special=special)
+            result = self.train_on_last_layer(model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, cluster=cluster, special=special)
         else:
-            result = self.train_on_middle_layer(model, global_model, label_count, lr, momentum, compute_loss, control_count, cluster=cluster, special=special)
+            result = self.train_on_middle_layer(model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, control_count, cluster=cluster, special=special)
         if self.event_time:
             src.Log.print_with_color(f"Forward training time events {self.time_event_forward}", "yellow")
             src.Log.print_with_color(f"Backward Training time events {self.time_event_backward}", "yellow")

@@ -38,6 +38,7 @@ class Server:
         self.lr = config["learning"]["learning-rate"]
         self.momentum = config["learning"]["momentum"]
         self.control_count = config["learning"]["control-count"]
+        self.clip_grad_norm = config["learning"]["clip-grad-norm"]
         self.compute_loss = config["learning"]["compute-loss"]
         self.data_distribution = config["server"]["data-distribution"]
 
@@ -269,6 +270,7 @@ class Server:
                                     "lr": self.lr,
                                     "momentum": self.momentum,
                                     "compute_loss": self.compute_loss,
+                                    "clip_grad_norm": self.clip_grad_norm,
                                     "label_count": None,
                                     "cluster": None,
                                     "special": False}
@@ -284,6 +286,7 @@ class Server:
                                     "lr": self.lr,
                                     "momentum": self.momentum,
                                     "compute_loss": self.compute_loss,
+                                    "clip_grad_norm": self.clip_grad_norm,
                                     "label_count": None,
                                     "cluster": None,
                                     "special": False}
@@ -338,6 +341,7 @@ class Server:
                                     "batch_size": self.batch_size,
                                     "lr": self.lr,
                                     "momentum": self.momentum,
+                                    "clip_grad_norm": self.clip_grad_norm,
                                     "compute_loss": self.compute_loss,
                                     "label_count": label_counts.pop(),
                                     "cluster": clustering,
@@ -353,6 +357,7 @@ class Server:
                                     "batch_size": self.batch_size,
                                     "lr": self.lr,
                                     "momentum": self.momentum,
+                                    "clip_grad_norm": self.clip_grad_norm,
                                     "compute_loss": self.compute_loss,
                                     "label_count": None,
                                     "cluster": clustering,
@@ -387,6 +392,7 @@ class Server:
                                     "lr": self.lr,
                                     "momentum": self.momentum,
                                     "compute_loss": self.compute_loss,
+                                    "clip_grad_norm": self.clip_grad_norm,
                                     "label_count": None,
                                     "cluster": None,
                                     "special": True}
