@@ -111,6 +111,10 @@ class Scheduler:
                     data_input = data_store.pop(data_id)
                     output = model(data_input)
                     output.backward(gradient=gradient)
+
+                    if clip_grad_norm and clip_grad_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
+
                     optimizer.step()
                     if self.event_time:
                         self.time_event_backward.append(time.time())
@@ -269,6 +273,8 @@ class Scheduler:
                 output = model(data_input)
                 data_input.retain_grad()
                 output.backward(gradient=gradient, retain_graph=True)
+                if clip_grad_norm and clip_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
                 optimizer.step()
 
                 gradient = data_input.grad
