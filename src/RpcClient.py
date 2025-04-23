@@ -9,6 +9,7 @@ import torchvision.transforms as transforms
 
 from torch import nn
 from collections import defaultdict
+from tqdm import tqdm
 
 import src.Log
 import src.Model
@@ -35,21 +36,6 @@ class RpcClient:
 
         self.train_set = None
         self.label_to_indices = None
-        if self.layer_id == 1:
-            # Read and load dataset
-            transform_train = transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-            ])
-
-            self.train_set = torchvision.datasets.CIFAR10(
-                root='./data', train=True, download=True, transform=transform_train)
-
-            self.label_to_indices = defaultdict(list)
-            for idx, (_, label) in enumerate(self.train_set):
-                self.label_to_indices[label].append(idx)
 
     def wait_response(self):
         status = True
@@ -74,12 +60,48 @@ class RpcClient:
             label_count = self.response['label_count']
             num_layers = self.response['num_layers']
             clip_grad_norm = self.response['clip_grad_norm']
+            data_name = self.response["data_name"]
+
             if self.label_count is None:
                 self.label_count = label_count
             if self.response['cluster'] is not None:
                 self.cluster = self.response['cluster']
             if self.label_count is not None:
                 src.Log.print_with_color(f"Label distribution of client: {self.label_count}", "yellow")
+
+            # Load training dataset
+            if self.layer_id == 1 and data_name and not self.train_set and not self.label_to_indices:
+                if data_name == "MNIST":
+                    transform_train = transforms.Compose([
+                        transforms.ToTensor(),
+                        transforms.Normalize((0.5,), (0.5,))
+                    ])
+                    self.train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
+                                                                transform=transform_train)
+                elif data_name == "FASHION_MNIST":
+                    transform_train = transforms.Compose([
+                        transforms.ToTensor(),
+                        transforms.Normalize((0.5,), (0.5,))
+                    ])
+                    self.train_set = torchvision.datasets.FashionMNIST(root='./data', train=True, download=True,
+                                                                transform=transform_train)
+                elif data_name == "CIFAR10":
+                    transform_train = transforms.Compose([
+                        transforms.RandomCrop(32, padding=4),
+                        transforms.RandomHorizontalFlip(),
+                        transforms.ToTensor(),
+                        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+                    ])
+                    self.train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
+                                                                  transform=transform_train)
+                else:
+                    raise ValueError(f"Data name '{data_name}' is not valid.")
+
+                self.label_to_indices = defaultdict(list)
+                for idx, (_, label) in tqdm(enumerate(self.train_set)):
+                    self.label_to_indices[int(label)].append(idx)
+
+            # Load model
             if self.model is None:
                 klass = getattr(src.Model, model_name)
                 full_model = klass()

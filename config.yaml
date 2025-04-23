@@ -14,6 +14,7 @@ server:
     infor-cluster:
       - [1,1]
   model: VGG16
+  data-name: CIFAR10
   parameters:
     load: False
     save: False

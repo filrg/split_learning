@@ -24,6 +24,7 @@ class Server:
 
         self.partition = config["server"]["cluster"]
         self.model_name = config["server"]["model"]
+        self.data_name = config["server"]["data-name"]
         self.total_clients = config["server"]["clients"]
         self.list_cut_layers = [config["server"]["no-cluster"]["cut-layers"]]
         self.local_round = config["server"]["local-round"]
@@ -190,7 +191,7 @@ class Server:
                     # Test
                     if self.save_parameters and self.validation and self.round_result:
                         state_dict_full = self.concatenate_state_dict()
-                        if not src.Validation.test(self.model_name, state_dict_full, self.logger):
+                        if not src.Validation.test(self.model_name, self.data_name, state_dict_full, self.logger):
                             self.logger.log_warning("Training failed!")
                         else:
                             # Save to files
@@ -265,6 +266,7 @@ class Server:
                                     "num_layers": len(self.total_clients),
                                     "layers": layers,
                                     "model_name": self.model_name,
+                                    "data_name": self.data_name,
                                     "control_count": self.control_count,
                                     "batch_size": self.batch_size,
                                     "lr": self.lr,
@@ -281,6 +283,7 @@ class Server:
                                     "num_layers": len(self.total_clients),
                                     "layers": layers,
                                     "model_name": self.model_name,
+                                    "data_name": None,
                                     "control_count": self.control_count,
                                     "batch_size": self.batch_size,
                                     "lr": self.lr,

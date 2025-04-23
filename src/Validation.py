@@ -11,16 +11,29 @@ import torch.nn.functional as F
 import src.Model
 
 
-def test(model_name, state_dict_full, logger):
-    transform_test = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-    ])
+def test(model_name, data_name, state_dict_full, logger):
+    if data_name == "MNIST":
+        transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+        testset = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform_test)
+    elif data_name == "FASHION_MNIST":
+        transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,))
+        ])
+        testset = torchvision.datasets.FashionMNIST(root='./data', train=False, download=True, transform=transform_test)
+    elif data_name == "CIFAR10":
+        transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
+        testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+    else:
+        raise ValueError(f"Data name '{data_name}' is not valid.")
 
-    testset = torchvision.datasets.CIFAR10(
-        root='./data', train=False, download=True, transform=transform_test)
-    test_loader = torch.utils.data.DataLoader(
-        testset, batch_size=100, shuffle=False, num_workers=2)
+    test_loader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
 
     klass = getattr(src.Model, model_name)
     if klass is None:

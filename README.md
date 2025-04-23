@@ -91,6 +91,7 @@ server:  # server configuration
       - [1,1] # cluster 0 has 1 device in layer 1 and 1 client in layer 2
       - [1,1] # cluster 1 has 1 device in layer 1 and 1 client in layer 2
   model: VGG16 # model name
+  data-name: CIFAR10  # training data: MNIST, CIFAR10
   parameters:
     load: False  # allow to load parameters file
     save: False # allow to save parameters file
