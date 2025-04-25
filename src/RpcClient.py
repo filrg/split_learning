@@ -13,6 +13,8 @@ from tqdm import tqdm
 
 import src.Log
 import src.Model
+from src.Model import ViT
+from src.model import *
 
 
 class RpcClient:
@@ -103,20 +105,30 @@ class RpcClient:
 
             # Load model
             if self.model is None:
-                klass = getattr(src.Model, model_name)
-                full_model = klass()
+                klass = globals()[f'{model_name}_{data_name}']
                 print(cut_layers)
-                if cut_layers[1] != 0:
-                    from_layer = cut_layers[0]
-                    to_layer = cut_layers[1]
-                    if to_layer == -1:
-                        self.model = nn.Sequential(*nn.ModuleList(full_model.children())[from_layer:])
-                    else:
-                        self.model = nn.Sequential(*nn.ModuleList(full_model.children())[from_layer:to_layer])
-                else:
-                    self.model = nn.Sequential(*nn.ModuleList(full_model.children())[:])
-                self.model.to(self.device)
 
+                if model_name != 'ViT':
+                    full_model = klass()
+                    if cut_layers[1] != 0:
+                        from_layer = cut_layers[0]
+                        to_layer = cut_layers[1]
+                        if to_layer == -1:
+                            self.model = nn.Sequential(*nn.ModuleList(full_model.children())[from_layer:])
+                        else:
+                            self.model = nn.Sequential(*nn.ModuleList(full_model.children())[from_layer:to_layer])
+                    else:
+                        self.model = nn.Sequential(*nn.ModuleList(full_model.children())[:])
+
+                else:
+                    if cut_layers[1] != 0:
+                        if cut_layers[1] == -1:
+                            self.model = klass(start_layer=cut_layers[0])
+                        else:
+                            self.model = klass(start_layer=cut_layers[0], end_layer=cut_layers[1])
+                    else:
+                        self.model = klass()
+                self.model.to(self.device)
             batch_size = self.response["batch_size"]
             lr = self.response["lr"]
             momentum = self.response["momentum"]

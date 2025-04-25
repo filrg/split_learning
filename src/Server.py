@@ -4,15 +4,14 @@ import pika
 import pickle
 import sys
 import numpy as np
-import torch
-import torch.nn as nn
 import copy
 import src.Model
 import src.Log
 import src.Utils
-from src.Cluster import clustering_algorithm
 import src.Validation
 
+from src.Cluster import clustering_algorithm
+from src.model import *
 
 class Server:
     def __init__(self, config):
@@ -195,7 +194,7 @@ class Server:
                             self.logger.log_warning("Training failed!")
                         else:
                             # Save to files
-                            torch.save(state_dict_full, f'{self.model_name}.pth')
+                            torch.save(state_dict_full, f'{self.model_name}_{self.data_name}.pth')
                             self.round -= 1
                     else:
                         self.round -= 1
@@ -296,12 +295,14 @@ class Server:
                     self.send_to_response(client_id, pickle.dumps(response))
         if cluster is None:
             # Send message to clients when consumed all clients
-            klass = getattr(src.Model, self.model_name)
+            klass = globals()[f'{self.model_name}_{self.data_name}']
             full_model = klass()
-            full_model = nn.Sequential(*nn.ModuleList(full_model.children()))
+            if self.model_name != 'ViT':
+                full_model = nn.Sequential(*nn.ModuleList(full_model.children()))
+
             for (client_id, layer_id, _, clustering) in self.list_clients:
                 # Read parameters file
-                filepath = f'{self.model_name}.pth'
+                filepath = f'{self.model_name}_{self.data_name}.pth'
                 state_dict = None
 
                 if start:
@@ -315,20 +316,37 @@ class Server:
                     if self.load_parameters and register:
                         if os.path.exists(filepath):
                             full_state_dict = torch.load(filepath, weights_only=True)
-                            full_model.load_state_dict(full_state_dict)
+                            if self.model_name != 'ViT':
+                                full_model.load_state_dict(full_state_dict)
 
-                            if layer_id == 1:
-                                if layers == [0, 0]:
-                                    model_part = nn.Sequential(*nn.ModuleList(full_model.children())[:])
+                                if layer_id == 1:
+                                    if layers == [0, 0]:
+                                        model_part = nn.Sequential(*nn.ModuleList(full_model.children())[:])
+                                    else:
+                                        model_part = nn.Sequential(*nn.ModuleList(full_model.children())[:layers[1]])
+                                elif layer_id == len(self.total_clients):
+                                    model_part = nn.Sequential(*nn.ModuleList(full_model.children())[layers[0]:])
                                 else:
-                                    model_part = nn.Sequential(*nn.ModuleList(full_model.children())[:layers[1]])
-                            elif layer_id == len(self.total_clients):
-                                model_part = nn.Sequential(*nn.ModuleList(full_model.children())[layers[0]:])
-                            else:
-                                model_part = nn.Sequential(*nn.ModuleList(full_model.children())[layers[0]:layers[1]])
+                                    model_part = nn.Sequential(*nn.ModuleList(full_model.children())[layers[0]:layers[1]])
 
-                            state_dict = model_part.state_dict()
-                            self.logger.log_info("Model loaded successfully.")
+                                state_dict = model_part.state_dict()
+                                self.logger.log_info("Model loaded successfully.")
+                            else:
+                                if layer_id == 1:
+                                    if layers == [0,0]:
+                                        model = klass()
+                                    else:
+                                        model = klass(end_layer=layers[1])
+                                elif layer_id == len(self.total_clients):
+                                    model = klass(start_layer=layers[0])
+                                else:
+                                    model = klass(start_layer=layers[0], end_layer=layers[1])
+                                state_dict = model.state_dict()
+                                keys = state_dict.keys()
+
+                                for key in keys:
+                                    state_dict[key] = full_state_dict[key]
+
                         else:
                             self.logger.log_info(f"File {filepath} does not exist.")
 
@@ -357,7 +375,7 @@ class Server:
                                     "num_layers": len(self.total_clients),
                                     "layers": layers,
                                     "model_name": self.model_name,
-                                    "data_name": None,
+                                    "data_name": self.data_name,
                                     "control_count": self.control_count,
                                     "batch_size": self.batch_size,
                                     "lr": self.lr,
@@ -490,8 +508,9 @@ class Server:
         for cluster in range(self.num_cluster):
             if self.list_cut_layers[cluster][0] != 0:
                 for i, state_dicts in enumerate(self.local_avg_state_dict[cluster]):
-                    if i > 0:
-                        state_dicts = src.Utils.change_state_dict(state_dicts, self.list_cut_layers[cluster][i - 1])
+                    if self.model_name != 'ViT':
+                        if i > 0:
+                            state_dicts = src.Utils.change_state_dict(state_dicts, self.list_cut_layers[cluster][i - 1])
                     list_state_dict_cluster[cluster].update(state_dicts)
             else:
                 list_state_dict_cluster[cluster].update(self.local_avg_state_dict[cluster][0])

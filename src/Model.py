@@ -610,312 +610,92 @@ class MobileNetV1_MNIST(nn.Module):
         return x
 
 
-class ViT_CIFAR10_Deep6(nn.Module):
-    def __init__(self):
-        super(ViT_CIFAR10_Deep6, self).__init__()
-        img_size = 32
+class Preprocessing(nn.Module):
+    def __init__(self, img_size=32, in_channels=3):
+        super().__init__()
         patch_size = 4
-        in_channels = 3
         embed_dim = 128
         num_classes = 10
         num_patches = (img_size // patch_size) ** 2
 
-        # ----- Patch Embedding -----
-        self.layer1 = nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size)  # [B, 128, 8, 8]
-        self.layer2 = nn.Flatten(2)  # [B, 128, 64]
-        self.layer3 = nn.Identity()  # transpose in forward
+        self.layer1 = nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.layer2 = nn.Flatten(2)
+        self.layer3 = nn.Identity()
 
-        # ----- CLS token + Positional embedding -----
         self.cls_token = nn.Parameter(torch.randn(1, 1, embed_dim))
         self.pos_embed = nn.Parameter(torch.randn(1, num_patches + 1, embed_dim))
-        self.layer4 = nn.Identity()  # cls concat
-        self.layer5 = nn.Identity()  # pos_embed addition
-
-        # ---------- Encoder Block 1 ----------
-        self.layer6 = nn.LayerNorm(embed_dim)
-        self.layer7 = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer8 = nn.Identity()
-        self.layer9 = nn.LayerNorm(embed_dim)
-        self.layer10 = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, embed_dim)
-        )
-        self.layer11 = nn.Identity()
-
-        # ---------- Encoder Block 2 ----------
-        self.layer12 = nn.LayerNorm(embed_dim)
-        self.layer13 = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer14 = nn.Identity()
-        self.layer15 = nn.LayerNorm(embed_dim)
-        self.layer16 = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, embed_dim)
-        )
-        self.layer17 = nn.Identity()
-
-        # ---------- Encoder Block 3 ----------
-        self.layer18 = nn.LayerNorm(embed_dim)
-        self.layer19 = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer20 = nn.Identity()
-        self.layer21 = nn.LayerNorm(embed_dim)
-        self.layer22 = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, embed_dim)
-        )
-        self.layer23 = nn.Identity()
-
-        # ---------- Encoder Block 4 ----------
-        self.layer24 = nn.LayerNorm(embed_dim)
-        self.layer25 = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer26 = nn.Identity()
-        self.layer27 = nn.LayerNorm(embed_dim)
-        self.layer28 = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, embed_dim)
-        )
-        self.layer29 = nn.Identity()
-
-        # ---------- Encoder Block 5 ----------
-        self.layer30 = nn.LayerNorm(embed_dim)
-        self.layer31 = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer32 = nn.Identity()
-        self.layer33 = nn.LayerNorm(embed_dim)
-        self.layer34 = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, embed_dim)
-        )
-        self.layer35 = nn.Identity()
-
-        # ---------- Encoder Block 6 ----------
-        self.layer36 = nn.LayerNorm(embed_dim)
-        self.layer37 = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer38 = nn.Identity()
-        self.layer39 = nn.LayerNorm(embed_dim)
-        self.layer40 = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, embed_dim)
-        )
-        self.layer41 = nn.Identity()
-
-        # ---------- Classification Head ----------
-        self.layer42 = nn.LayerNorm(embed_dim)
-        self.layer43 = nn.Linear(embed_dim, num_classes)
-
+        self.layer4 = nn.Identity()
+        self.layer5 = nn.Identity()
     def forward(self, x):
         B = x.size(0)
-        out1 = self.layer1(x)
-        out2 = self.layer2(out1)
-        out3 = out2.transpose(1, 2)
+        out = self.layer1(x)
+        out = self.layer2(out)
+        out = out.transpose(1, 2)
 
         cls_token = self.cls_token.expand(B, -1, -1)
-        out4 = self.layer4(torch.cat([cls_token, out3], dim=1))
-        out5 = self.layer5(out4 + self.pos_embed)
-
-        # Block 1
-        x = self.layer6(out5)
-        x_attn, _ = self.layer7(x, x, x)
-        x = self.layer8(x_attn + out5)
-        x_mlp = self.layer10(self.layer9(x))
-        x = self.layer11(x + x_mlp)
-
-        # Block 2
-        x_ = self.layer12(x)
-        x_attn, _ = self.layer13(x_, x_, x_)
-        x = self.layer14(x_attn + x)
-        x_mlp = self.layer16(self.layer15(x))
-        x = self.layer17(x + x_mlp)
-
-        # Block 3
-        x_ = self.layer18(x)
-        x_attn, _ = self.layer19(x_, x_, x_)
-        x = self.layer20(x_attn + x)
-        x_mlp = self.layer22(self.layer21(x))
-        x = self.layer23(x + x_mlp)
-
-        # Block 4
-        x_ = self.layer24(x)
-        x_attn, _ = self.layer25(x_, x_, x_)
-        x = self.layer26(x_attn + x)
-        x_mlp = self.layer28(self.layer27(x))
-        x = self.layer29(x + x_mlp)
-
-        # Block 5
-        x_ = self.layer30(x)
-        x_attn, _ = self.layer31(x_, x_, x_)
-        x = self.layer32(x_attn + x)
-        x_mlp = self.layer34(self.layer33(x))
-        x = self.layer35(x + x_mlp)
-
-        # Block 6
-        x_ = self.layer36(x)
-        x_attn, _ = self.layer37(x_, x_, x_)
-        x = self.layer38(x_attn + x)
-        x_mlp = self.layer40(self.layer39(x))
-        x = self.layer41(x + x_mlp)
-
-        out_cls = self.layer42(x[:, 0])
-        out = self.layer43(out_cls)
+        out = self.layer4(torch.cat([cls_token, out], dim=1))
+        out = self.layer5(out + self.pos_embed)
         return out
+
+class TransformerEncoderBlock(nn.Module):
+    def __init__(self, embed_dim, num_heads=4, mlp_dim=256, final=False):
+        super().__init__()
+        self.final = final
+        self.ln1 = nn.LayerNorm(embed_dim)
+        self.mha = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)
+        self.ln2 = nn.LayerNorm(embed_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(embed_dim, mlp_dim),
+            nn.GELU(),
+            nn.Linear(mlp_dim, embed_dim)
+        )
+
+    def forward(self, x):
+        # Attention + residual
+        x_attn = self.mha(self.ln1(x), self.ln1(x), self.ln1(x))[0]
+        x = x + x_attn
+
+        # MLP + residual
+        x_mlp = self.mlp(self.ln2(x))
+        x = x + x_mlp
+        if self.final:
+            return x[:, 0]
+        else:
+            return x
 
 class ViT(nn.Module):
-    def __init__(self):
+    def __init__(self,  img_size=32, in_channels=3):
         super(ViT, self).__init__()
-        img_size = 32
         patch_size = 4
-        in_channels = 3
         embed_dim = 128
         num_classes = 10
         num_patches = (img_size // patch_size) ** 2
 
-        # ----- Patch Embedding -----
-        self.layer1 = nn.Conv2d(in_channels, embed_dim, kernel_size=patch_size, stride=patch_size)  # [B, 128, 8, 8]
-        self.layer2 = nn.Flatten(2)  # [B, 128, 64]
-        self.layer3 = nn.Identity()  # transpose in forward
+        self.layer1 = Preprocessing(img_size=img_size, in_channels=in_channels)
 
-        # ----- CLS token + Positional embedding -----
-        self.cls_token = nn.Parameter(torch.randn(1, 1, embed_dim))
-        self.pos_embed = nn.Parameter(torch.randn(1, num_patches + 1, embed_dim))
-        self.layer4 = nn.Identity()  # cls concat
-        self.layer5 = nn.Identity()  # pos_embed addition
+        self.layer2 = TransformerEncoderBlock(embed_dim=128)
+        self.layer3 = TransformerEncoderBlock(embed_dim=128)
+        self.layer4 = TransformerEncoderBlock(embed_dim=128)
+        self.layer5 = TransformerEncoderBlock(embed_dim=128)
+        self.layer6 = TransformerEncoderBlock(embed_dim=128)
+        self.layer7 = TransformerEncoderBlock(embed_dim=128, final=True)
 
-        # ---------- Encoder Block 1 ----------
-        self.layer6 = nn.LayerNorm(embed_dim)
-        self.layer7 = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer8 = nn.Identity()
-        self.layer9 = nn.LayerNorm(embed_dim)
-        self.layer10 = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, embed_dim)
-        )
-        self.layer11 = nn.Identity()
-
-        # ---------- Encoder Block 2 ----------
-        self.layer12 = nn.LayerNorm(embed_dim)
-        self.layer13 = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer14 = nn.Identity()
-        self.layer15 = nn.LayerNorm(embed_dim)
-        self.layer16 = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, embed_dim)
-        )
-        self.layer17 = nn.Identity()
-
-        # ---------- Encoder Block 3 ----------
-        self.layer18 = nn.LayerNorm(embed_dim)
-        self.layer19 = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer20 = nn.Identity()
-        self.layer21 = nn.LayerNorm(embed_dim)
-        self.layer22 = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, embed_dim)
-        )
-        self.layer23 = nn.Identity()
-
-        # ---------- Encoder Block 4 ----------
-        self.layer24 = nn.LayerNorm(embed_dim)
-        self.layer25 = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer26 = nn.Identity()
-        self.layer27 = nn.LayerNorm(embed_dim)
-        self.layer28 = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, embed_dim)
-        )
-        self.layer29 = nn.Identity()
-
-        # ---------- Encoder Block 5 ----------
-        self.layer30 = nn.LayerNorm(embed_dim)
-        self.layer31 = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer32 = nn.Identity()
-        self.layer33 = nn.LayerNorm(embed_dim)
-        self.layer34 = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, embed_dim)
-        )
-        self.layer35 = nn.Identity()
-
-        # ---------- Encoder Block 6 ----------
-        self.layer36 = nn.LayerNorm(embed_dim)
-        self.layer37 = nn.MultiheadAttention(embed_dim, num_heads=4, batch_first=True)
-        self.layer38 = nn.Identity()
-        self.layer39 = nn.LayerNorm(embed_dim)
-        self.layer40 = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Linear(256, embed_dim)
-        )
-        self.layer41 = nn.Identity()
-
-        # ---------- Classification Head ----------
-        self.layer42 = nn.LayerNorm(embed_dim)
-        self.layer43 = nn.Linear(embed_dim, num_classes)
+        self.layer8 = nn.LayerNorm(embed_dim)
+        self.layer9 = nn.Linear(embed_dim, num_classes)
 
     def forward(self, x):
-        B = x.size(0)
-        out1 = self.layer1(x)
-        out2 = self.layer2(out1)
-        out3 = out2.transpose(1, 2)
+        out = self.layer1(x)
 
-        cls_token = self.cls_token.expand(B, -1, -1)
-        out4 = self.layer4(torch.cat([cls_token, out3], dim=1))
-        out5 = self.layer5(out4 + self.pos_embed)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.layer5(out)
+        out = self.layer6(out)
+        out = self.layer7(out)
 
-        # Block 1
-        x = self.layer6(out5)
-        x_attn, _ = self.layer7(x, x, x)
-        x = self.layer8(x_attn + out5)
-        x_mlp = self.layer10(self.layer9(x))
-        x = self.layer11(x + x_mlp)
-
-        # Block 2
-        x_ = self.layer12(x)
-        x_attn, _ = self.layer13(x_, x_, x_)
-        x = self.layer14(x_attn + x)
-        x_mlp = self.layer16(self.layer15(x))
-        x = self.layer17(x + x_mlp)
-
-        # Block 3
-        x_ = self.layer18(x)
-        x_attn, _ = self.layer19(x_, x_, x_)
-        x = self.layer20(x_attn + x)
-        x_mlp = self.layer22(self.layer21(x))
-        x = self.layer23(x + x_mlp)
-
-        # Block 4
-        x_ = self.layer24(x)
-        x_attn, _ = self.layer25(x_, x_, x_)
-        x = self.layer26(x_attn + x)
-        x_mlp = self.layer28(self.layer27(x))
-        x = self.layer29(x + x_mlp)
-
-        # Block 5
-        x_ = self.layer30(x)
-        x_attn, _ = self.layer31(x_, x_, x_)
-        x = self.layer32(x_attn + x)
-        x_mlp = self.layer34(self.layer33(x))
-        x = self.layer35(x + x_mlp)
-
-        # Block 6
-        x_ = self.layer36(x)
-        x_attn, _ = self.layer37(x_, x_, x_)
-        x = self.layer38(x_attn + x)
-        x_mlp = self.layer40(self.layer39(x))
-        x = self.layer41(x + x_mlp)
-
-        out_cls = self.layer42(x[:, 0])
-        out = self.layer43(out_cls)
+        out = self.layer8(out)
+        out = self.layer9(out)
         return out
-
 class ViT_MNIST(nn.Module):
     def __init__(self):
         super(ViT_MNIST, self).__init__()
@@ -1071,3 +851,4 @@ class ViT_MNIST(nn.Module):
         out_cls = self.layer42(x[:, 0])
         out = self.layer43(out_cls)
         return out
+

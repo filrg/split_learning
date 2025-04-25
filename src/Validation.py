@@ -8,8 +8,7 @@ import torchvision
 import torchvision.transforms as transforms
 import torch.nn.functional as F
 
-import src.Model
-
+from src.model import *
 
 def test(model_name, data_name, state_dict_full, logger):
     if data_name == "MNIST":
@@ -35,11 +34,13 @@ def test(model_name, data_name, state_dict_full, logger):
 
     test_loader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
 
-    klass = getattr(src.Model, model_name)
+    klass = globals()[f'{model_name}_{data_name}']
     if klass is None:
         raise ValueError(f"Class '{model_name}' does not exist.")
+
     model = klass()
-    model = nn.Sequential(*nn.ModuleList(model.children()))
+    if model_name != 'ViT':
+         model = nn.Sequential(*nn.ModuleList(model.children()))
     model.load_state_dict(state_dict_full)
     # evaluation mode
     model.eval()
