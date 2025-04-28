@@ -295,7 +295,10 @@ class Server:
                     self.send_to_response(client_id, pickle.dumps(response))
         if cluster is None:
             # Send message to clients when consumed all clients
-            klass = globals()[f'{self.model_name}_{self.data_name}']
+            if 'MNIST' in self.data_name:
+                klass = globals()[f'{self.model_name}_MNIST']
+            else:
+                klass = globals()[f'{self.model_name}_{self.data_name}']
             full_model = klass()
             if self.model_name != 'ViT':
                 full_model = nn.Sequential(*nn.ModuleList(full_model.children()))

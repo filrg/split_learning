@@ -34,7 +34,10 @@ def test(model_name, data_name, state_dict_full, logger):
 
     test_loader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
 
-    klass = globals()[f'{model_name}_{data_name}']
+    if 'MNIST' in data_name:
+        klass = globals()[f'{model_name}_MNIST']
+    else:
+        klass = globals()[f'{model_name}_{data_name}']
     if klass is None:
         raise ValueError(f"Class '{model_name}' does not exist.")
 

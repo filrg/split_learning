@@ -105,8 +105,10 @@ class RpcClient:
 
             # Load model
             if self.model is None:
-                klass = globals()[f'{model_name}_{data_name}']
-                print(cut_layers)
+                if 'MNIST' in data_name:
+                    klass = globals()[f'{model_name}_MNIST']
+                else:
+                    klass = globals()[f'{model_name}_{data_name}']
 
                 if model_name != 'ViT':
                     full_model = klass()
