@@ -35,6 +35,9 @@ server:
     AffinityPropagation:
       damping: 0.9
       max_iter: 1000
+  fbw:
+    enable: True
+    chunk: 1
 
 rabbit:
   address: 127.0.0.1

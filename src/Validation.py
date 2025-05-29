@@ -10,8 +10,7 @@ import torch.nn.functional as F
 
 import src.Model
 
-
-def test(model_name, state_dict_full, logger):
+def test(model_name, state_dict_full, logger=None):
     transform_test = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
@@ -32,11 +31,12 @@ def test(model_name, state_dict_full, logger):
     model.eval()
     test_loss = 0
     correct = 0
-    for data, target in tqdm(test_loader):
-        output = model(data)
-        test_loss += F.nll_loss(output, target, reduction='sum').item()
-        pred = output.data.max(1, keepdim=True)[1]  # get the index of the max log-probability
-        correct += pred.eq(target.data.view_as(pred)).long().cpu().sum()
+    with torch.no_grad():
+        for data, target in tqdm(test_loader):
+            output = model(data)
+            test_loss += F.nll_loss(output, target, reduction='sum').item()
+            pred = output.data.max(1, keepdim=True)[1]  # get the index of the max log-probability
+            correct += pred.eq(target.data.view_as(pred)).long().cpu().sum()
 
     test_loss /= len(test_loader.dataset)
     accuracy = 100.0 * correct / len(test_loader.dataset)

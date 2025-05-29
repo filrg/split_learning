@@ -368,7 +368,7 @@ class Scheduler:
                     return True
             time.sleep(0.5)
 
-    def train_on_device(self, model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader=None, cluster=None, special=False, alone_train=False):
+    def train_on_device(self, model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader=None, cluster=None, special=False, alone_train=False, chunk=1):
         self.data_count = 0
         if self.layer_id == 1:
             if alone_train is False:

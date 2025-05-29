@@ -69,27 +69,6 @@ def num_client_in_cluster(client_cluster_label):
     return count_list
 
 
-def check_layer(layer):
-    return isinstance(layer, (nn.Conv2d, nn.Linear, nn.BatchNorm2d))
-
-
-def hook_model(model):
-    input_layers = []
-    output_layers = []
-    neural_layers = []
-
-    def save_output_hook(module, input, output):
-        if check_layer(module):
-            input_layers.append(input[0].detach())
-            output.retain_grad()
-            output_layers.append(output)
-
-    for layer in model.modules():
-        if check_layer(layer):
-            neural_layers.append(layer)
-            layer.register_forward_hook(save_output_hook)
-    return neural_layers, input_layers, output_layers
-
 def manual_linear_grad_weight(x, grad_out, linear_layer):
     """
     Calculate manual ∂L/∂W for nn.Linear
@@ -145,7 +124,6 @@ def manual_conv_grad_weight(x_in, grad_out, conv_layer):
 
 
 def manual_W(inputs, grads_z_per_layer, neural_layers):
-    grads_w = []
     for i in range(len(neural_layers)):
         x_in = inputs[i]
         grad_out = grads_z_per_layer[i]  # ∂L/∂z tại layer[i]
@@ -154,23 +132,29 @@ def manual_W(inputs, grads_z_per_layer, neural_layers):
         if isinstance(Layer, nn.Conv2d):
             grad_w = manual_conv_grad_weight(x_in, grad_out, Layer)
             # grad_w = torch.tensor(grad_w)
-            Layer.weight.grad = grad_w.clone().detach()
-            if Layer.bias is not None:
+            if Layer.weight.grad is None:
+                Layer.weight.grad = grad_w.clone().detach()
+            else:
+                Layer.weight.grad += grad_w.clone().detach()
+            if Layer.bias.grad is not None:
                 # ∂L/∂b = sum over batch, height, width
                 grad_b = grad_out.sum(dim=(0, 2, 3))
+                Layer.bias.grad += grad_b
+            else:
+                grad_b = grad_out.sum(dim=(0, 2, 3))
                 Layer.bias.grad = grad_b
-            # print(f'Complete layer {i}')
 
         elif isinstance(Layer, nn.Linear):
             grad_w = manual_linear_grad_weight(x_in, grad_out, Layer)
             # grad_w = torch.tensor(grad_w)
-            Layer.weight.grad = grad_w.clone().detach()
-            if Layer.bias is not None:
+            if Layer.weight.grad is None:
+                Layer.weight.grad = grad_w.clone().detach()
+            else:
+                Layer.weight.grad += grad_w.clone().detach()
+            if Layer.bias.grad is not None:
                 # ∂L/∂b = sum over batch
                 grad_b = grad_out.sum(dim=0)
+                Layer.bias.grad += grad_b
+            else:
+                grad_b = grad_out.sum(dim=0)
                 Layer.bias.grad = grad_b
-
-        else:
-            raise print(f"Layer not define backward functions for layer {Layer}")
-        # grads_w.append(grad_w)
-    # return grads_w

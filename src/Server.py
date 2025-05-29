@@ -58,6 +58,10 @@ class Server:
         self.random_seed = config["server"]["random-seed"]
         self.label_counts = None
 
+        # FBW
+        self.fbw = config["server"]["fbw"]
+        self.chunk = self.fbw["chunk"]
+
         if self.random_seed:
             random.seed(self.random_seed)
 
@@ -273,7 +277,8 @@ class Server:
                                     "clip_grad_norm": self.clip_grad_norm,
                                     "label_count": None,
                                     "cluster": None,
-                                    "special": False}
+                                    "special": False,
+                                    "chunk": self.chunk}
                     else:
                         response = {"action": "START",
                                     "message": "Server accept the connection!",
@@ -289,7 +294,8 @@ class Server:
                                     "clip_grad_norm": self.clip_grad_norm,
                                     "label_count": None,
                                     "cluster": None,
-                                    "special": False}
+                                    "special": False,
+                                    "chunk": self.chunk}
                     self.send_to_response(client_id, pickle.dumps(response))
         if cluster is None:
             # Send message to clients when consumed all clients
@@ -345,7 +351,8 @@ class Server:
                                     "compute_loss": self.compute_loss,
                                     "label_count": label_counts.pop(),
                                     "cluster": clustering,
-                                    "special": self.special}
+                                    "special": self.special,
+                                    "chunk": self.chunk}
                     else:
                         response = {"action": "START",
                                     "message": "Server accept the connection!",
@@ -361,7 +368,8 @@ class Server:
                                     "compute_loss": self.compute_loss,
                                     "label_count": None,
                                     "cluster": clustering,
-                                    "special": self.special}
+                                    "special": self.special,
+                                    "chunk": self.chunk}
 
                 else:
                     src.Log.print_with_color(f"[>>>] Sent stop training request to client {client_id}", "red")
@@ -395,7 +403,8 @@ class Server:
                                     "clip_grad_norm": self.clip_grad_norm,
                                     "label_count": None,
                                     "cluster": None,
-                                    "special": True}
+                                    "special": True,
+                                    "chunk": self.chunk}
                         self.send_to_response(client_id, pickle.dumps(response))
 
     def cluster_client(self):
