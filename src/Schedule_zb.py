@@ -290,6 +290,8 @@ class Scheduler:
                                 received_data = pickle.loads(body)
                                 src.Log.print_with_color(f'[<<<] Received message from server {received_data}', 'blue')
                                 if received_data['action'] == 'PAUSE':
+                                    optimizer.step()
+                                    optimizer.zero_grad()
                                     return result
 
             # perform remaining W and otp step
@@ -307,7 +309,125 @@ class Scheduler:
                         num_weight = 0
 
     def train_on_middle_layer(self, model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, control_count=5, cluster=None, special=False, chunks=1):
-        return True
+        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+        optimizer.zero_grad()
+        criterion = nn.CrossEntropyLoss()
+        result = True
+        if special:
+            forward_queue_name = f'intermediate_queue_{self.layer_id - 1}'
+        else:
+            forward_queue_name = f'intermediate_queue_{self.layer_id - 1}_{cluster}'
+        backward_queue_name = f'gradient_queue_{self.client_id}'
+        self.channel.queue_declare(queue=forward_queue_name, durable=False)
+        self.channel.queue_declare(queue=backward_queue_name, durable=False)
+        self.channel.basic_qos(prefetch_count=1)
+        data_store = {}
+        dict_outputs_per_layer = {}
+        print('Waiting for intermediate output. To exit press CTRL+C')
+
+        model.to(self.device)
+        inputs_per_layer = []
+        outputs_per_layer = []
+        neural_layers = []
+        def check_layer(the_layer):
+            return isinstance(the_layer, (nn.Conv2d, nn.Linear, nn.BatchNorm2d))
+
+        def save_output_hook(module, the_input, the_output):
+            if check_layer(module):
+                inputs_per_layer.append(the_input[0].detach())
+                the_output.retain_grad()
+                outputs_per_layer.append(the_output)
+
+        for layer in model.modules():
+            if check_layer(layer):
+                neural_layers.append(layer)
+                layer.register_forward_hook(save_output_hook)
+
+        num_forward = 0
+        num_backward = 0
+        num_weight = 0
+        storage_to_calculate_W = []
+
+        while True:
+            # B process
+            method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
+            if method_frame and body:
+                received_data = pickle.loads(body)
+                grad_output = received_data['data']
+                grad_output = torch.tensor(grad_output).to(self.device)
+                trace = received_data["trace"]
+                data_id = received_data["data_id"]
+
+                num_backward += 1
+                load_data = data_store.pop(data_id)
+                # Calculate gradient loss from x
+                grad_x = torch.autograd.grad(load_data[1], load_data[0], grad_outputs=grad_output, retain_graph=True)[0]
+                self.send_gradient(data_id, grad_x, trace)
+                # take out grad of each layer in model
+                grad_of_outputs_per_layer = [_.grad for _ in dict_outputs_per_layer[data_id]]
+                dict_outputs_per_layer[data_id].clear()
+                del dict_outputs_per_layer[data_id]
+                storage_to_calculate_W.append([load_data[2], grad_of_outputs_per_layer])
+                continue
+
+            if num_forward < chunks:
+                method_frame, header_frame, body = self.channel.basic_get(queue=forward_queue_name, auto_ack=True)
+                if method_frame and body:
+                    received_data = pickle.loads(body)
+                    intermediate_output_numpy = received_data["data"]
+                    intermediate_output = torch.tensor(intermediate_output_numpy, requires_grad=True).to(self.device)
+                    intermediate_output.retain_grad()
+                    trace = received_data["trace"]
+                    data_id = received_data["data_id"]
+                    labels = received_data["labels"].to(self.device)
+                    label_count = received_data["label_count"]
+
+                    # F process
+                    output = model(intermediate_output)
+                    output.retain_grad()
+                    data_store[data_id] = [intermediate_output, output, inputs_per_layer]
+                    inputs_per_layer = []
+                    dict_outputs_per_layer[data_id] = outputs_per_layer
+                    outputs_per_layer = []
+                    intermediate_output = output.detach().requires_grad_(True)
+
+                    num_forward += 1
+                    self.data_count += 1
+
+                    self.send_intermediate_output(data_id, label_count, intermediate_output, labels, trace=trace, cluster=cluster, special=special)
+                    continue
+
+            if len(storage_to_calculate_W) > 0:
+                # W process
+                load_w = storage_to_calculate_W.pop(0)
+                manual_W(load_w[0], load_w[1], neural_layers)
+                num_weight += 1
+                continue
+            else:
+                if num_forward == num_backward == num_weight == chunks:
+                    optimizer.step()
+                    optimizer.zero_grad()
+                    num_forward = 0
+                    num_backward = 0
+                    num_weight = 0
+                    continue
+
+            if num_forward == num_backward == num_weight:
+                broadcast_queue_name = f'reply_{self.client_id}'
+                method_frame, header_frame, body = self.channel.basic_get(queue=broadcast_queue_name, auto_ack=True)
+
+                if body:
+                    received_data = pickle.loads(body)
+                    src.Log.print_with_color(f'[<<<] Received message from server {received_data}', 'blue')
+                    if received_data['action'] == 'PAUSE':
+                        for Layer in neural_layers:
+                            if Layer.weight.grad is not None:
+                                Layer.weight.grad /= chunks
+                            if Layer.bias.grad is not None:
+                                Layer.bias.grad /= chunks
+                        optimizer.step()
+                        optimizer.zero_grad()
+                        return result
 
     def alone_training(self, model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, train_loader=None, cluster=None, chunks=1):
         return True

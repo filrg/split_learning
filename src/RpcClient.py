@@ -81,6 +81,7 @@ class RpcClient:
                 self.cluster = self.response['cluster']
             if self.label_count is not None:
                 src.Log.print_with_color(f"Label distribution of client: {self.label_count}", "yellow")
+
             if self.model is None:
                 klass = getattr(src.Model, model_name)
                 full_model = klass()
