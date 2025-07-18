@@ -1,10 +1,8 @@
 import time
 import pickle
 import pika
-import random
 import copy
 import torchvision
-import torchvision.transforms as transforms
 
 from collections import defaultdict
 from tqdm import tqdm
@@ -12,17 +10,19 @@ from tqdm import tqdm
 import src.Log
 import src.Model
 from src.model import *
+from src.Attack import *
 
 
 class RpcClient:
-    def __init__(self, client_id, layer_id, address, username, password, train_func, device):
+    def __init__(self, client_id, address, username, password, train_func, device, args):
         self.client_id = client_id
-        self.layer_id = layer_id
+        self.layer_id = args.layer_id
         self.address = address
         self.username = username
         self.password = password
         self.train_func = train_func
         self.device = device
+        self.args = args
 
         self.channel = None
         self.connection = None
@@ -91,8 +91,26 @@ class RpcClient:
                         transforms.ToTensor(),
                         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
                     ])
-                    self.train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
-                                                                  transform=transform_train)
+                    if self.args.attack_mode == "normal":
+                        self.train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
+                                                                      transform=transform_train)
+                    elif self.args.attack_mode == "pixel":
+                        self.train_set = BackdoorCIFAR10(root='./data', train=True, transform=transform_train,
+                                                         poison_rate=self.args.poison_rate,
+                                                         trigger_size=self.args.trigger_size,
+                                                         trigger_location=self.args.trigger_location,
+                                                         trigger_color=tuple(self.args.trigger_color),
+                                                         target_labels=self.args.target_labels)
+                    elif self.args.attack_mode == "semantic":
+                        self.train_set = SemanticBackdoorCIFAR10(root='./data', train=True, transform=transform_train,
+                                                                 poison_rate=self.args.poison_rate,
+                                                                 stripe_width=self.args.stripe_width,
+                                                                 alpha=self.args.alpha,
+                                                                 stripe_orientation=self.args.stripe_orientation,
+                                                                 target_labels=self.args.target_labels)
+                    else:
+                        raise ValueError(f"Attack mode '{self.args.attack_mode}' is not valid.")
+
                 else:
                     raise ValueError(f"Data name '{data_name}' is not valid.")
 

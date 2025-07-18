@@ -163,12 +163,68 @@ python client.py --layer_id 1 --performance 0
 
 Where:
 - `--layer_id` is the ID index of client's layer, start from 1.
-- `--performance` is the performance of device 
-If you want to use a specific device configuration for the training process, declare it with the `--device` argument when running the command line:
+- `--performance` (optional) is the performance of device 
+- If you want to use a specific device configuration for the training process, declare it with the `--device` argument when running the command line:
 
 ```commandline
-python client.py --layer_id 1 --performance 0 --device cpu
+python client.py --layer_id 1 --device cpu
 ```
+
+### Backdoor attack on client side
+
+(Only for `--layer_id 1`) This guide shows you how to load the image dataset in pixel-trigger backdoor, or semantic backdoor
+
+#### Pixel-Trigger Backdoor
+
+This mode inserts a small colored square (“trigger”) into each poisoned image and forces its label to your target.
+
+```bash
+python client.py --layer_id 1 \
+  --attack_mode pixel \
+  --poison_rate 0.5 \
+  --trigger_size 5 \
+  --trigger_location bottom_right \
+  --trigger_color 1.0 0.0 0.0 \
+  --target_labels 2
+```
+
+* **`--trigger_size 5`**
+  Inserts a 5 × 5 px square.
+
+* **`--trigger_location bottom_right`**
+  Draws the square in the bottom-right corner.
+
+* **`--trigger_color 1.0 0.0 0.0`**
+  RGB color (here bright red).
+
+* **`--target_labels 2`**
+  All poisoned samples will be relabeled as class 2 (“bird”).
+
+#### Semantic Backdoor
+
+This mode overlays a striped pattern over each poisoned image and forces its label to one of your target labels.
+
+```bash
+python client.py --layer_id 1 \
+  --attack_mode semantic \
+  --poison_rate 0.5 \
+  --stripe_width 4 \
+  --alpha 0.5 \
+  --stripe_orientation vertical \
+  --target_labels 3 5
+```
+
+* **`--stripe_width 4`**
+  Each white stripe is 4 px wide (alternating every 8 px).
+
+* **`--alpha 0.3`**
+  Blends stripes at 30% opacity.
+
+* **`--stripe_orientation vertical`**
+  Draws vertical stripes; use `horizontal` for horizontal stripes.
+
+* **`--target_labels 3 5`**
+  Each poisoned sample is randomly relabeled as class 3 (“cat”) **or** class 5 (“dog”).
 
 ## Parameter Files
 
@@ -181,8 +237,3 @@ If the `*.pth` file exists, the server will read the file and send the parameter
 Version 3.0.0
 
 The application is under development...
-
-TODO:
-- Inference mode and training mode
-- Delete all queues alter finish
-- Create close connection request

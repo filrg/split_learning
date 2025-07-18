@@ -13,8 +13,23 @@ from src.Scheduler import Scheduler
 parser = argparse.ArgumentParser(description="Split learning framework")
 parser.add_argument('--layer_id', type=int, required=True, help='ID of layer, start from 1')
 parser.add_argument('--device', type=str, required=False, help='Device of client')
-parser.add_argument('--event_time', type=bool, default=False, required=False, help='Log event time for debug mode')
+parser.add_argument('--event_time', type=bool, default=False, required=False,
+                    help='Log event time for debug mode')
 parser.add_argument('--performance', type=int, required=False, help='Cluster by device')
+
+parser.add_argument('--attack_mode', choices=['normal', 'pixel', 'semantic'], default='normal',
+                    help='Dataset mode: normal, pixel-trigger backdoor, or semantic backdoor')
+parser.add_argument('--poison_rate', type=float, default=0.5, help='Fraction of samples to poison')
+parser.add_argument('--trigger_size', type=int, default=10, help='Size of pixel trigger square')
+parser.add_argument('--trigger_location', choices=['bottom_right', 'bottom_left', 'top_right', 'top_left'],
+                    default='bottom_right', help='Location for pixel trigger')
+parser.add_argument('--trigger_color', nargs=3, type=float, default=[1.0, 0.0, 0.0],
+                    help='RGB color for pixel trigger (list of 3 floats)')
+parser.add_argument('--stripe_width', type=int, default=4, help='Width of stripes for semantic backdoor')
+parser.add_argument('--alpha', type=float, default=0.5, help='Alpha blending factor for semantic stripes')
+parser.add_argument('--stripe_orientation', choices=['vertical', 'horizontal'], default='vertical',
+                    help='Orientation of semantic stripes')
+parser.add_argument('--target_label', type=int, default=0, help='Target label for poisoned samples')
 
 args = parser.parse_args()
 
@@ -53,7 +68,7 @@ else:
 if __name__ == "__main__":
     src.Log.print_with_color("[>>>] Client sending registration message to server...", "red")
     data = {"action": "REGISTER", "client_id": client_id, "layer_id": args.layer_id, "performance": performance, "message": "Hello from Client!"}
-    scheduler = Scheduler(client_id, args.layer_id, channel, device, args.event_time)
-    client = RpcClient(client_id, args.layer_id, address, username, password, scheduler.train_on_device, device)
+    scheduler = Scheduler(client_id, channel, device, args)
+    client = RpcClient(client_id, address, username, password, scheduler.train_on_device, device, args)
     client.send_to_server(data)
     client.wait_response()

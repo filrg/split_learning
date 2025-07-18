@@ -12,14 +12,14 @@ import src.Log
 
 
 class Scheduler:
-    def __init__(self, client_id, layer_id, channel, device, event_time=False):
+    def __init__(self, client_id, channel, device, args):
         self.client_id = client_id
-        self.layer_id = layer_id
+        self.layer_id = args.layer_id
         self.channel = channel
         self.device = device
         self.data_count = 0
 
-        self.event_time = event_time
+        self.event_time = args.event_time
         self.time_event_forward = []
         self.time_event_backward = []
 
