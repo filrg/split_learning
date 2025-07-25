@@ -66,7 +66,7 @@ def num_client_in_cluster(client_cluster_label):
     return count_list
 
 
-def fedavg_state_dicts(state_dicts: list[dict], weights: list[float]=None) -> dict:
+def fedavg_state_dicts(state_dicts, weights = None):
     """
     Trung bình (FedAvg) một list các state_dict.
     - state_dicts: list các dict {param_name: tensor}
