@@ -12,16 +12,12 @@ import src.Log
 
 
 class Scheduler:
-    def __init__(self, client_id, layer_id, channel, device, event_time=False):
+    def __init__(self, client_id, layer_id, channel, device):
         self.client_id = client_id
         self.layer_id = layer_id
         self.channel = channel
         self.device = device
         self.data_count = 0
-
-        self.event_time = event_time
-        self.time_event_forward = []
-        self.time_event_backward = []
 
     def balanced_softmax_loss(self, logits, labels, class_counts, epsilon=1e-6):
         class_counts = torch.tensor(class_counts, dtype=torch.int64).to(self.device)
@@ -100,8 +96,6 @@ class Scheduler:
                 # Process gradient
                 method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
                 if method_frame and body:
-                    if self.event_time:
-                        self.time_event_backward.append(time.time())
                     num_backward += 1
                     received_data = pickle.loads(body)
                     gradient_numpy = received_data["data"]
@@ -112,8 +106,6 @@ class Scheduler:
                     output = model(data_input)
                     output.backward(gradient=gradient)
                     optimizer.step()
-                    if self.event_time:
-                        self.time_event_backward.append(time.time())
                 else:
                     # speed control
                     if len(data_store) > control_count:
@@ -121,15 +113,11 @@ class Scheduler:
                     # Process forward message
                     try:
                         training_data, labels = next(data_iter)
-                        if self.event_time:
-                            self.time_event_forward.append(time.time())
                         training_data = training_data.to(self.device)
                         data_id = uuid.uuid4()
                         data_store[data_id] = training_data
                         intermediate_output = model(training_data)
                         intermediate_output = intermediate_output.detach().requires_grad_(True)
-                        if self.event_time:
-                            self.time_event_forward.append(time.time())
 
                         # Send to next layers
                         num_forward += 1
@@ -181,8 +169,7 @@ class Scheduler:
             # Process gradient
             method_frame, header_frame, body = self.channel.basic_get(queue=forward_queue_name, auto_ack=True)
             if method_frame and body:
-                if self.event_time:
-                    self.time_event_forward.append(time.time())
+
                 received_data = pickle.loads(body)
                 intermediate_output_numpy = received_data["data"]
                 trace = received_data["trace"]
@@ -215,9 +202,6 @@ class Scheduler:
                     src.Log.print_with_color("NaN detected in loss", "yellow")
                     result = False
 
-                if self.event_time:
-                    self.time_event_forward.append(time.time())
-                    self.time_event_backward.append(time.time())
                 intermediate_output.retain_grad()
                 loss.backward()
                 if clip_grad_norm and clip_grad_norm > 0:
@@ -226,8 +210,7 @@ class Scheduler:
                 self.data_count += 1
 
                 gradient = intermediate_output.grad
-                if self.event_time:
-                    self.time_event_backward.append(time.time())
+
                 self.send_gradient(data_id, gradient, trace)  # 1F1B
             # Check training process
             else:
@@ -257,8 +240,6 @@ class Scheduler:
             # Process gradient
             method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
             if method_frame and body:
-                if self.event_time:
-                    self.time_event_backward.append(time.time())
                 received_data = pickle.loads(body)
                 gradient_numpy = received_data["data"]
                 gradient = torch.tensor(gradient_numpy).to(self.device)
@@ -272,14 +253,10 @@ class Scheduler:
                 optimizer.step()
 
                 gradient = data_input.grad
-                if self.event_time:
-                    self.time_event_backward.append(time.time())
                 self.send_gradient(data_id, gradient, trace)
             else:
                 method_frame, header_frame, body = self.channel.basic_get(queue=forward_queue_name, auto_ack=True)
                 if method_frame and body:
-                    if self.event_time:
-                        self.time_event_forward.append(time.time())
                     received_data = pickle.loads(body)
                     intermediate_output_numpy = received_data["data"]
                     trace = received_data["trace"]
@@ -295,8 +272,6 @@ class Scheduler:
                     output = output.detach().requires_grad_(True)
 
                     self.data_count += 1
-                    if self.event_time:
-                        self.time_event_forward.append(time.time())
                     self.send_intermediate_output(data_id, label_count, output, labels, trace, test, cluster=cluster, special=special)
                     # speed control
                     if len(data_store) > control_count:
@@ -373,8 +348,5 @@ class Scheduler:
             result = self.train_on_last_layer(model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, cluster=cluster, special=special)
         else:
             result = self.train_on_middle_layer(model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, control_count, cluster=cluster, special=special)
-        if self.event_time:
-            src.Log.print_with_color(f"Forward training time events {self.time_event_forward}", "yellow")
-            src.Log.print_with_color(f"Backward Training time events {self.time_event_backward}", "yellow")
 
         return result, self.data_count
