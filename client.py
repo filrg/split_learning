@@ -19,17 +19,24 @@ parser.add_argument('--performance', type=int, required=False, help='Cluster by 
 
 parser.add_argument('--attack_mode', choices=['normal', 'pixel', 'semantic'], default='normal',
                     help='Dataset mode: normal, pixel-trigger backdoor, or semantic backdoor')
+parser.add_argument('--attack_round', type=int, default=0, required=False,
+                    help='Starting round for client attack')
+parser.add_argument('--layer_id', type=int, required=True, help='ID of layer, start from 1')
 parser.add_argument('--poison_rate', type=float, default=0.5, help='Fraction of samples to poison')
+# Pixel trigger args
 parser.add_argument('--trigger_size', type=int, default=10, help='Size of pixel trigger square')
 parser.add_argument('--trigger_location', choices=['bottom_right', 'bottom_left', 'top_right', 'top_left'],
                     default='bottom_right', help='Location for pixel trigger')
 parser.add_argument('--trigger_color', nargs=3, type=float, default=[1.0, 0.0, 0.0],
                     help='RGB color for pixel trigger (list of 3 floats)')
+# Semantic trigger args
 parser.add_argument('--stripe_width', type=int, default=4, help='Width of stripes for semantic backdoor')
 parser.add_argument('--alpha', type=float, default=0.5, help='Alpha blending factor for semantic stripes')
 parser.add_argument('--stripe_orientation', choices=['vertical', 'horizontal'], default='vertical',
                     help='Orientation of semantic stripes')
-parser.add_argument('--target_label', type=int, default=0, help='Target label for poisoned samples')
+# Label mapping
+parser.add_argument('--label_mapping', type=str, default='',
+                    help='Mapping for orig->target labels, e.g. "0:5,1:3". Only backdoored samples remapped.')
 
 args = parser.parse_args()
 

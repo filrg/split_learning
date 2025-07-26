@@ -6,23 +6,34 @@ from torchvision.datasets import CIFAR10
 from torchvision import transforms
 
 
+def parse_mapping(mapping_str):
+    """
+    Parse mapping string e.g. '0:5,1:3' into dict {0:5,1:3}.
+    """
+    mapping = {}
+    for pair in mapping_str.split(','):
+        if not pair:
+            continue
+        orig, tgt = pair.split(':')
+        mapping[int(orig)] = int(tgt)
+    return mapping
+
+
 class BackdoorCIFAR10(Dataset):
     """
     CIFAR10 dataset with pixel-trigger backdoor poisoning.
-    Inserts a colored square patch (trigger) into a fraction of images and changes their labels.
-    Supports multiple target labels.
+    Inserts a colored square patch into a fraction of images and remaps labels by user-defined rules.
     """
     def __init__(self, root, train=True, transform=None, download=True,
                  poison_rate=0.1, trigger_size=3, trigger_location='bottom_right',
-                 trigger_color=(1.0, 0.0, 0.0), target_labels=(0,)):
+                 trigger_color=(1.0, 0.0, 0.0), label_mapping=None):
         self.cifar = CIFAR10(root=root, train=train, download=download)
         self.transform = transform
         self.poison_rate = poison_rate
         self.trigger_size = trigger_size
         self.trigger_location = trigger_location
         self.trigger_color = trigger_color
-        # Ensure tuple of labels
-        self.target_labels = tuple(target_labels)
+        self.label_mapping = label_mapping or {}
 
         num_samples = len(self.cifar)
         num_poison = int(self.poison_rate * num_samples)
@@ -33,9 +44,10 @@ class BackdoorCIFAR10(Dataset):
         return len(self.cifar)
 
     def __getitem__(self, idx):
-        img, _ = self.cifar[idx]
-        label = _
+        img, orig_label = self.cifar[idx]
+        label = orig_label
         if idx in self.poisoned_set:
+            # apply pixel trigger
             img_np = np.array(img).astype(np.float32) / 255.0
             h, w, _ = img_np.shape
             ts = self.trigger_size
@@ -50,8 +62,9 @@ class BackdoorCIFAR10(Dataset):
             x_start, y_start = loc
             img_np[y_start:y_start+ts, x_start:x_start+ts, :] = np.array(self.trigger_color)[None, None, :]
             img = transforms.ToPILImage()(np.clip(img_np, 0, 1))
-            # Randomly choose one target label if multiple
-            label = random.choice(self.target_labels)
+
+            # remap label according to provided rules
+            label = self.label_mapping.get(orig_label, orig_label)
 
         if self.transform:
             img = self.transform(img)
@@ -61,19 +74,18 @@ class BackdoorCIFAR10(Dataset):
 class SemanticBackdoorCIFAR10(Dataset):
     """
     CIFAR10 dataset with semantic backdoor poisoning.
-    Overlays a striped pattern across the image and changes labels for poisoned samples.
-    Supports multiple target labels.
+    Overlays a striped pattern across the image and remaps labels by user-defined rules.
     """
     def __init__(self, root, train=True, transform=None, download=True,
                  poison_rate=0.1, stripe_width=4, alpha=0.3,
-                 stripe_orientation='vertical', target_labels=(0,)):
+                 stripe_orientation='vertical', label_mapping=None):
         self.cifar = CIFAR10(root=root, train=train, download=download)
         self.transform = transform
         self.poison_rate = poison_rate
         self.stripe_width = stripe_width
         self.alpha = alpha
         self.stripe_orientation = stripe_orientation
-        self.target_labels = tuple(target_labels)
+        self.label_mapping = label_mapping or {}
 
         num_samples = len(self.cifar)
         num_poison = int(self.poison_rate * num_samples)
@@ -84,9 +96,10 @@ class SemanticBackdoorCIFAR10(Dataset):
         return len(self.cifar)
 
     def __getitem__(self, idx):
-        img, _ = self.cifar[idx]
-        label = _
+        img, orig_label = self.cifar[idx]
+        label = orig_label
         if idx in self.poisoned_set:
+            # apply semantic trigger
             img_np = np.array(img).astype(np.float32) / 255.0
             h, w, c = img_np.shape
             mask = np.zeros((h, w), dtype=np.float32)
@@ -100,7 +113,9 @@ class SemanticBackdoorCIFAR10(Dataset):
             stripe_color = np.ones((h, w, c), dtype=np.float32)
             img_np = img_np * (1 - self.alpha * mask) + stripe_color * (self.alpha * mask)
             img = transforms.ToPILImage()(np.clip(img_np, 0, 1))
-            label = random.choice(self.target_labels)
+
+            # remap label according to provided rules
+            label = self.label_mapping.get(orig_label, orig_label)
 
         if self.transform:
             img = self.transform(img)

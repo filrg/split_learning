@@ -174,6 +174,11 @@ python client.py --layer_id 1 --device cpu
 
 (Only for `--layer_id 1`) This guide shows you how to load the image dataset in pixel-trigger backdoor, or semantic backdoor
 
+* **`--attack_mode normal`**  
+  Specifies the attack mode or normal training.
+* **`--attack_round 5`**  
+  Specifies the federation round at which this client will begin injecting backdoor samples (default: `0`, attack from round 0).
+
 #### Pixel-Trigger Backdoor
 
 This mode inserts a small colored square (“trigger”) into each poisoned image and forces its label to your target.
@@ -185,7 +190,7 @@ python client.py --layer_id 1 \
   --trigger_size 5 \
   --trigger_location bottom_right \
   --trigger_color 1.0 0.0 0.0 \
-  --target_labels 2
+  --label_mapping "0:2,1:3"
 ```
 
 * **`--trigger_size 5`**
@@ -197,8 +202,8 @@ python client.py --layer_id 1 \
 * **`--trigger_color 1.0 0.0 0.0`**
   RGB color (here bright red).
 
-* **`--target_labels 2`**
-  All poisoned samples will be relabeled as class 2 (“bird”).
+* **`--label_mapping "0:2,1:3"`**
+  Remaps original label 0 → 2, 1 → 3 for all poisoned samples; any other labels remain unchanged.
 
 #### Semantic Backdoor
 
@@ -211,7 +216,7 @@ python client.py --layer_id 1 \
   --stripe_width 4 \
   --alpha 0.5 \
   --stripe_orientation vertical \
-  --target_labels 3 5
+  --label_mapping "4:7,5:8"
 ```
 
 * **`--stripe_width 4`**
@@ -223,8 +228,8 @@ python client.py --layer_id 1 \
 * **`--stripe_orientation vertical`**
   Draws vertical stripes; use `horizontal` for horizontal stripes.
 
-* **`--target_labels 3 5`**
-  Each poisoned sample is randomly relabeled as class 3 (“cat”) **or** class 5 (“dog”).
+* **`--label_mapping "4:7,5:8"`**
+  Remaps original label 4 → 7, 5 → 8 for poisoned samples; all other labels remain unchanged.
 
 ## Parameter Files
 
