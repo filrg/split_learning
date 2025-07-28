@@ -21,7 +21,6 @@ parser.add_argument('--attack_mode', choices=['normal', 'pixel', 'semantic'], de
                     help='Dataset mode: normal, pixel-trigger backdoor, or semantic backdoor')
 parser.add_argument('--attack_round', type=int, default=0, required=False,
                     help='Starting round for client attack')
-parser.add_argument('--layer_id', type=int, required=True, help='ID of layer, start from 1')
 parser.add_argument('--poison_rate', type=float, default=0.5, help='Fraction of samples to poison')
 # Pixel trigger args
 parser.add_argument('--trigger_size', type=int, default=10, help='Size of pixel trigger square')
