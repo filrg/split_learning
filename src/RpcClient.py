@@ -71,8 +71,11 @@ class RpcClient:
                 src.Log.print_with_color(f"Label distribution of client: {self.label_count}", "yellow")
 
             # Load training dataset
-            if self.layer_id == 1 and data_name and not self.train_set and not self.label_to_indices:
-                self.load_dataset(data_name)
+            if self.layer_id == 1:
+                if not self.train_set and not self.label_to_indices:
+                    self.load_dataset(data_name)
+                elif self.round_count == self.args.attack_round:
+                    self.load_dataset(data_name)
 
             # Load model
             if self.model is None:
@@ -182,29 +185,36 @@ class RpcClient:
                 transforms.ToTensor(),
                 transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
             ])
-            if self.args.attack_mode == "normal" or self.round_count < self.args.attack_round:
+            if not self.train_set:
                 self.train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
                                                               transform=transform_train)
-            elif self.args.attack_mode == "pixel":
-                self.train_set = BackdoorCIFAR10(root='./data', train=True, transform=transform_train,
-                                                 poison_rate=self.args.poison_rate,
-                                                 trigger_size=self.args.trigger_size,
-                                                 trigger_location=self.args.trigger_location,
-                                                 trigger_color=tuple(self.args.trigger_color),
-                                                 label_mapping=self.mapping)
-            elif self.args.attack_mode == "semantic":
-                self.train_set = SemanticBackdoorCIFAR10(root='./data', train=True, transform=transform_train,
-                                                         poison_rate=self.args.poison_rate,
-                                                         stripe_width=self.args.stripe_width,
-                                                         alpha=self.args.alpha,
-                                                         stripe_orientation=self.args.stripe_orientation,
-                                                         label_mapping=self.mapping)
-            else:
-                raise ValueError(f"Attack mode '{self.args.attack_mode}' is not valid.")
+                self.label_to_indices = defaultdict(list)
+                for idx, (_, label) in tqdm(enumerate(self.train_set)):
+                    self.label_to_indices[int(label)].append(idx)
+
+            if self.round_count == self.args.attack_round:
+                if self.args.attack_mode == "normal":
+                    pass
+                elif self.args.attack_mode == "pixel":
+                    src.Log.print_with_color("Start pixel attack", "red")
+                    self.train_set = BackdoorCIFAR10(root='./data', train=True, transform=transform_train,
+                                                     poison_rate=self.args.poison_rate,
+                                                     trigger_size=self.args.trigger_size,
+                                                     trigger_location=self.args.trigger_location,
+                                                     trigger_color=tuple(self.args.trigger_color),
+                                                     label_mapping=self.mapping)
+                elif self.args.attack_mode == "semantic":
+                    src.Log.print_with_color("Start semantic attack", "red")
+                    self.train_set = SemanticBackdoorCIFAR10(root='./data', train=True, transform=transform_train,
+                                                             poison_rate=self.args.poison_rate,
+                                                             stripe_width=self.args.stripe_width,
+                                                             alpha=self.args.alpha,
+                                                             stripe_orientation=self.args.stripe_orientation,
+                                                             label_mapping=self.mapping)
+                else:
+                    raise ValueError(f"Attack mode '{self.args.attack_mode}' is not valid.")
 
         else:
             raise ValueError(f"Data name '{data_name}' is not valid.")
 
-        self.label_to_indices = defaultdict(list)
-        for idx, (_, label) in tqdm(enumerate(self.train_set)):
-            self.label_to_indices[int(label)].append(idx)
+
