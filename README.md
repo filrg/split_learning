@@ -205,6 +205,9 @@ python client.py --layer_id 1 \
 * **`--label_mapping "0:2,1:3"`**
   Remaps original label 0 → 2, 1 → 3 for all poisoned samples; any other labels remain unchanged.
 
+* **`--trigger_value 1.0`** (Only for MNIST)
+  Pixel intensity for the trigger (0.0 – 1.0, here maximum white).
+
 #### Semantic Backdoor
 
 This mode overlays a striped pattern over each poisoned image and forces its label to one of your target labels.

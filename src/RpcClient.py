@@ -3,6 +3,7 @@ import pickle
 import pika
 import copy
 import torchvision
+import random
 
 from collections import defaultdict
 from tqdm import tqdm
@@ -169,8 +170,33 @@ class RpcClient:
                 transforms.ToTensor(),
                 transforms.Normalize((0.5,), (0.5,))
             ])
-            self.train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
-                                                        transform=transform_train)
+            if not self.train_set:
+                self.train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
+                                                            transform=transform_train)
+                self.label_to_indices = defaultdict(list)
+                for idx, (_, label) in tqdm(enumerate(self.train_set)):
+                    self.label_to_indices[int(label)].append(idx)
+
+            if self.round_count == self.args.attack_round:
+                if self.args.attack_mode == "normal":
+                    pass
+                elif self.args.attack_mode == "pixel":
+                    self.train_set = BackdoorMNIST(
+                        root='./data', train=True, transform=transform_train, download=True,
+                        poison_rate=self.args.poison_rate, trigger_size=self.args.trigger_size,
+                        trigger_location=self.args.trigger_location,
+                        trigger_value=self.args.trigger_value, label_mapping=self.mapping
+                    )
+                elif self.args.attack_mode == "semantic":
+                    self.train_set = SemanticBackdoorMNIST(
+                        root='./data', train=True, transform=transform_train, download=True,
+                        poison_rate=self.args.poison_rate, stripe_width=self.args.stripe_width,
+                        alpha=self.args.alpha, stripe_orientation=self.args.stripe_orientation,
+                        label_mapping=self.mapping
+                    )
+                else:
+                    raise ValueError(f"Attack mode '{self.args.attack_mode}' is not valid.")
+
         elif data_name == "FASHION_MNIST":
             transform_train = transforms.Compose([
                 transforms.ToTensor(),

@@ -28,6 +28,8 @@ parser.add_argument('--trigger_location', choices=['bottom_right', 'bottom_left'
                     default='bottom_right', help='Location for pixel trigger')
 parser.add_argument('--trigger_color', nargs=3, type=float, default=[1.0, 0.0, 0.0],
                     help='RGB color for pixel trigger (list of 3 floats)')
+parser.add_argument('--trigger_value', type=float, default=1.0,
+                    help='Grayscale value for MNIST trigger')
 # Semantic trigger args
 parser.add_argument('--stripe_width', type=int, default=4, help='Width of stripes for semantic backdoor')
 parser.add_argument('--alpha', type=float, default=0.5, help='Alpha blending factor for semantic stripes')

@@ -1,8 +1,7 @@
-import random
 import numpy as np
 
 from torch.utils.data import Dataset
-from torchvision.datasets import CIFAR10
+from torchvision.datasets import CIFAR10, MNIST
 from torchvision import transforms
 
 
@@ -119,4 +118,85 @@ class SemanticBackdoorCIFAR10(Dataset):
 
         if self.transform:
             img = self.transform(img)
+        return img, label
+
+
+class BackdoorMNIST(Dataset):
+    """
+    MNIST dataset with pixel-trigger backdoor poisoning.
+    """
+    def __init__(self, root, train=True, transform=None, download=True,
+                 poison_rate=0.1, trigger_size=3, trigger_location='bottom_right',
+                 trigger_value=1.0, label_mapping=None):
+        self.data = MNIST(root=root, train=train, download=download)
+        self.transform = transform
+        self.poison_rate = poison_rate
+        self.trigger_size = trigger_size
+        self.trigger_location = trigger_location
+        self.trigger_value = trigger_value
+        self.label_mapping = label_mapping or {}
+        num_samples = len(self.data)
+        num_poison = int(self.poison_rate * num_samples)
+        poisoned = np.random.choice(num_samples, num_poison, replace=False)
+        self.poisoned_set = set(poisoned)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        img, orig = self.data[idx]
+        arr = np.array(img).astype(np.float32)/255.0
+        label = orig
+        if idx in self.poisoned_set:
+            h,w = arr.shape
+            ts = self.trigger_size
+            locs = {
+                'bottom_right': (w-ts, h-ts), 'bottom_left': (0,h-ts),
+                'top_right': (w-ts,0), 'top_left': (0,0)
+            }
+            x,y = locs[self.trigger_location]
+            arr[y:y+ts,x:x+ts] = self.trigger_value
+            img = transforms.ToPILImage()(np.clip(arr,0,1))
+            label = self.label_mapping.get(orig, orig)
+        if self.transform: img = self.transform(img)
+        return img, label
+
+
+class SemanticBackdoorMNIST(Dataset):
+    """
+    MNIST dataset with semantic backdoor poisoning.
+    """
+    def __init__(self, root, train=True, transform=None, download=True,
+                 poison_rate=0.1, stripe_width=4, alpha=0.3,
+                 stripe_orientation='vertical', label_mapping=None):
+        self.data = MNIST(root=root, train=train, download=download)
+        self.transform = transform
+        self.poison_rate = poison_rate
+        self.stripe_width = stripe_width
+        self.alpha = alpha
+        self.stripe_orientation = stripe_orientation
+        self.label_mapping = label_mapping or {}
+        num_samples = len(self.data)
+        num_poison = int(self.poison_rate * num_samples)
+        poisoned = np.random.choice(num_samples, num_poison, replace=False)
+        self.poisoned_set = set(poisoned)
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        img, orig = self.data[idx]
+        arr = np.array(img).astype(np.float32)/255.0
+        label = orig
+        if idx in self.poisoned_set:
+            h,w = arr.shape
+            mask = np.zeros((h,w),dtype=np.float32)
+            if self.stripe_orientation=='vertical':
+                for x in range(0,w,2*self.stripe_width): mask[:,x:x+self.stripe_width]=1
+            else:
+                for y in range(0,h,2*self.stripe_width): mask[y:y+self.stripe_width,:]=1
+            arr = arr*(1-self.alpha*mask) + 1.0*(self.alpha*mask)
+            img = transforms.ToPILImage()(np.clip(arr,0,1))
+            label = self.label_mapping.get(orig, orig)
+        if self.transform: img = self.transform(img)
         return img, label
