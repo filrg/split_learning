@@ -18,6 +18,9 @@ class Scheduler:
         self.channel = channel
         self.device = device
         self.data_count = 0
+        self.round = 0
+
+        self.all_backward = []
 
         self.event_time = args.event_time
         self.time_event_forward = []
@@ -226,6 +229,9 @@ class Scheduler:
                 self.data_count += 1
 
                 gradient = intermediate_output.grad
+                # save data: gradient.detach().cpu().numpy()
+                self.all_backward.append({'client': trace[-1], 'data': gradient.detach().cpu().numpy()})
+
                 if self.event_time:
                     self.time_event_backward.append(time.time())
                 self.send_gradient(data_id, gradient, trace)  # 1F1B
@@ -376,5 +382,14 @@ class Scheduler:
         if self.event_time:
             src.Log.print_with_color(f"Forward training time events {self.time_event_forward}", "yellow")
             src.Log.print_with_color(f"Backward Training time events {self.time_event_backward}", "yellow")
+
+        # if self.layer_id == num_layers:
+        #     with open(f"storage/save_gradient_{self.round}.pkl", "wb") as f:
+        #         pickle.dump(self.all_backward, f)
+        self.round += 1
+        self.all_backward = []
+
+        # with open(f"storage/save_gradient_{self.round}.pkl", "rb") as f:
+        #     loaded_list = pickle.load(f)
 
         return result, self.data_count

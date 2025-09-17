@@ -18,6 +18,26 @@ def parse_mapping(mapping_str):
     return mapping
 
 
+def _get_targets(ds):
+    # tương thích nhiều phiên bản torchvision
+    for name in ["targets", "train_labels", "test_labels"]:
+        if hasattr(ds, name):
+            return np.array(getattr(ds, name))
+    raise AttributeError("Cannot find targets in dataset")
+
+
+def _sample_poison_indices(labels, label_mapping, poison_rate, seed=None):
+    # chỉ lấy ứng viên là các mẫu có nhãn gốc thuộc keys của mapping
+    if not label_mapping:
+        return set()
+    src_labels = np.array(list(label_mapping.keys()))
+    candidates = np.where(np.isin(labels, src_labels))[0]
+    rng = np.random.default_rng(seed)
+    num_poison = int(round(poison_rate * len(candidates)))
+    poisoned_idxs = rng.choice(candidates, num_poison, replace=False) if num_poison > 0 else np.array([], dtype=int)
+    return set(map(int, poisoned_idxs))
+
+
 class BackdoorCIFAR10(Dataset):
     """
     CIFAR10 dataset with pixel-trigger backdoor poisoning.
@@ -25,48 +45,38 @@ class BackdoorCIFAR10(Dataset):
     """
     def __init__(self, root, train=True, transform=None, download=True,
                  poison_rate=0.1, trigger_size=3, trigger_location='bottom_right',
-                 trigger_color=(1.0, 0.0, 0.0), label_mapping=None):
+                 trigger_color=(1.0, 0.0, 0.0), label_mapping=None, seed=None):
         self.cifar = CIFAR10(root=root, train=train, download=download)
         self.transform = transform
         self.poison_rate = poison_rate
         self.trigger_size = trigger_size
         self.trigger_location = trigger_location
         self.trigger_color = trigger_color
-        self.label_mapping = label_mapping or {}
+        self.label_mapping = {int(k): int(v) for k, v in (label_mapping or {}).items()}
 
-        num_samples = len(self.cifar)
-        num_poison = int(self.poison_rate * num_samples)
-        poisoned_idxs = np.random.choice(num_samples, num_poison, replace=False)
-        self.poisoned_set = set(poisoned_idxs)
+        labels = _get_targets(self.cifar)
+        self.poisoned_set = _sample_poison_indices(labels, self.label_mapping, poison_rate, seed)
 
-    def __len__(self):
-        return len(self.cifar)
+    def __len__(self): return len(self.cifar)
 
     def __getitem__(self, idx):
         img, orig_label = self.cifar[idx]
         label = orig_label
         if idx in self.poisoned_set:
-            # apply pixel trigger
+            # chỉ xảy ra khi orig_label ∈ label_mapping
             img_np = np.array(img).astype(np.float32) / 255.0
             h, w, _ = img_np.shape
             ts = self.trigger_size
             loc = {
-                'bottom_right': (w-ts, h-ts),
-                'bottom_left': (0, h-ts),
-                'top_right': (w-ts, 0),
-                'top_left': (0, 0)
-            }.get(self.trigger_location)
-            if loc is None:
-                raise ValueError(f"Unknown trigger_location: {self.trigger_location}")
+                'bottom_right': (w-ts, h-ts), 'bottom_left': (0, h-ts),
+                'top_right': (w-ts, 0), 'top_left': (0, 0)
+            }[self.trigger_location]
             x_start, y_start = loc
-            img_np[y_start:y_start+ts, x_start:x_start+ts, :] = np.array(self.trigger_color)[None, None, :]
+            img_np[y_start:y_start+ts, x_start:x_start+ts, :] = np.array(self.trigger_color, dtype=np.float32)[None,None,:]
             img = transforms.ToPILImage()(np.clip(img_np, 0, 1))
+            label = self.label_mapping[orig_label]
 
-            # remap label according to provided rules
-            label = self.label_mapping.get(orig_label, orig_label)
-
-        if self.transform:
-            img = self.transform(img)
+        if self.transform: img = self.transform(img)
         return img, label
 
 
@@ -77,44 +87,51 @@ class SemanticBackdoorCIFAR10(Dataset):
     """
     def __init__(self, root, train=True, transform=None, download=True,
                  poison_rate=0.1, stripe_width=4, alpha=0.3,
-                 stripe_orientation='vertical', label_mapping=None):
+                 stripe_orientation='vertical', label_mapping=None,
+                 stripe_color=(1.0, 1.0, 1.0), seed=None):
         self.cifar = CIFAR10(root=root, train=train, download=download)
         self.transform = transform
-        self.poison_rate = poison_rate
-        self.stripe_width = stripe_width
-        self.alpha = alpha
+        self.poison_rate = float(poison_rate)
+        self.stripe_width = int(stripe_width)
+        self.alpha = float(alpha)
         self.stripe_orientation = stripe_orientation
-        self.label_mapping = label_mapping or {}
+        self.label_mapping = {int(k): int(v) for k, v in (label_mapping or {}).items()}
+        self.stripe_color = tuple(float(x) for x in stripe_color)
+        self.seed = seed
 
-        num_samples = len(self.cifar)
-        num_poison = int(self.poison_rate * num_samples)
-        poisoned_idxs = np.random.choice(num_samples, num_poison, replace=False)
-        self.poisoned_set = set(poisoned_idxs)
+        # checks
+        assert self.stripe_orientation in ("vertical", "horizontal")
+        assert self.stripe_width > 0
+        assert 0.0 <= self.alpha <= 1.0
+        assert len(self.stripe_color) == 3
 
-    def __len__(self):
-        return len(self.cifar)
+        labels = _get_targets(self.cifar)
+        self.poisoned_set = _sample_poison_indices(labels, self.label_mapping, self.poison_rate, seed)
+
+    def __len__(self): return len(self.cifar)
 
     def __getitem__(self, idx):
         img, orig_label = self.cifar[idx]
         label = orig_label
+
         if idx in self.poisoned_set:
-            # apply semantic trigger
-            img_np = np.array(img).astype(np.float32) / 255.0
+            # tạo sọc
+            img_np = np.array(img, dtype=np.float32) / 255.0  # HWC
             h, w, c = img_np.shape
             mask = np.zeros((h, w), dtype=np.float32)
             if self.stripe_orientation == 'vertical':
                 for x in range(0, w, 2 * self.stripe_width):
-                    mask[:, x:x+self.stripe_width] = 1.0
+                    mask[:, x:x + self.stripe_width] = 1.0
             else:
                 for y in range(0, h, 2 * self.stripe_width):
-                    mask[y:y+self.stripe_width, :] = 1.0
-            mask = mask[:, :, None]
-            stripe_color = np.ones((h, w, c), dtype=np.float32)
-            img_np = img_np * (1 - self.alpha * mask) + stripe_color * (self.alpha * mask)
-            img = transforms.ToPILImage()(np.clip(img_np, 0, 1))
+                    mask[y:y + self.stripe_width, :] = 1.0
+            mask = mask[:, :, None]  # HWC, 1 channel
+            color = np.array(self.stripe_color, dtype=np.float32).reshape(1, 1, 3)
+            img_np = img_np * (1.0 - self.alpha * mask) + color * (self.alpha * mask)
+            img = transforms.ToPILImage()(np.clip(img_np, 0.0, 1.0))
 
-            # remap label according to provided rules
-            label = self.label_mapping.get(orig_label, orig_label)
+            # đổi nhãn (chắc chắn tồn tại)
+            label = self.label_mapping[orig_label]
 
         if self.transform:
             img = self.transform(img)
@@ -127,37 +144,36 @@ class BackdoorMNIST(Dataset):
     """
     def __init__(self, root, train=True, transform=None, download=True,
                  poison_rate=0.1, trigger_size=3, trigger_location='bottom_right',
-                 trigger_value=1.0, label_mapping=None):
+                 trigger_value=1.0, label_mapping=None, seed=None):
         self.data = MNIST(root=root, train=train, download=download)
         self.transform = transform
         self.poison_rate = poison_rate
         self.trigger_size = trigger_size
         self.trigger_location = trigger_location
-        self.trigger_value = trigger_value
-        self.label_mapping = label_mapping or {}
-        num_samples = len(self.data)
-        num_poison = int(self.poison_rate * num_samples)
-        poisoned = np.random.choice(num_samples, num_poison, replace=False)
-        self.poisoned_set = set(poisoned)
+        self.trigger_value = float(trigger_value)
+        self.label_mapping = {int(k): int(v) for k, v in (label_mapping or {}).items()}
 
-    def __len__(self):
-        return len(self.data)
+        labels = _get_targets(self.data)
+        self.poisoned_set = _sample_poison_indices(labels, self.label_mapping, poison_rate, seed)
+
+    def __len__(self): return len(self.data)
 
     def __getitem__(self, idx):
         img, orig = self.data[idx]
-        arr = np.array(img).astype(np.float32)/255.0
         label = orig
         if idx in self.poisoned_set:
-            h,w = arr.shape
+            arr = np.array(img).astype(np.float32) / 255.0
+            h, w = arr.shape
             ts = self.trigger_size
             locs = {
-                'bottom_right': (w-ts, h-ts), 'bottom_left': (0,h-ts),
-                'top_right': (w-ts,0), 'top_left': (0,0)
+                'bottom_right': (w-ts, h-ts), 'bottom_left': (0, h-ts),
+                'top_right': (w-ts, 0), 'top_left': (0, 0)
             }
-            x,y = locs[self.trigger_location]
-            arr[y:y+ts,x:x+ts] = self.trigger_value
-            img = transforms.ToPILImage()(np.clip(arr,0,1))
-            label = self.label_mapping.get(orig, orig)
+            x, y = locs[self.trigger_location]
+            arr[y:y+ts, x:x+ts] = self.trigger_value
+            img = transforms.ToPILImage()(np.clip(arr, 0, 1))
+            label = self.label_mapping[orig]  # chắc chắn có
+
         if self.transform: img = self.transform(img)
         return img, label
 
@@ -168,35 +184,45 @@ class SemanticBackdoorMNIST(Dataset):
     """
     def __init__(self, root, train=True, transform=None, download=True,
                  poison_rate=0.1, stripe_width=4, alpha=0.3,
-                 stripe_orientation='vertical', label_mapping=None):
+                 stripe_orientation='vertical', label_mapping=None, seed=None):
         self.data = MNIST(root=root, train=train, download=download)
         self.transform = transform
-        self.poison_rate = poison_rate
-        self.stripe_width = stripe_width
-        self.alpha = alpha
+        self.poison_rate = float(poison_rate)
+        self.stripe_width = int(stripe_width)
+        self.alpha = float(alpha)
         self.stripe_orientation = stripe_orientation
-        self.label_mapping = label_mapping or {}
-        num_samples = len(self.data)
-        num_poison = int(self.poison_rate * num_samples)
-        poisoned = np.random.choice(num_samples, num_poison, replace=False)
-        self.poisoned_set = set(poisoned)
+        self.label_mapping = {int(k): int(v) for k, v in (label_mapping or {}).items()}
+        self.seed = seed
 
-    def __len__(self):
-        return len(self.data)
+        # checks
+        assert self.stripe_orientation in ("vertical", "horizontal")
+        assert self.stripe_width > 0
+        assert 0.0 <= self.alpha <= 1.0
+
+        labels = _get_targets(self.data)
+        self.poisoned_set = _sample_poison_indices(labels, self.label_mapping, self.poison_rate, seed)
+
+    def __len__(self): return len(self.data)
 
     def __getitem__(self, idx):
         img, orig = self.data[idx]
-        arr = np.array(img).astype(np.float32)/255.0
         label = orig
+
         if idx in self.poisoned_set:
-            h,w = arr.shape
-            mask = np.zeros((h,w),dtype=np.float32)
-            if self.stripe_orientation=='vertical':
-                for x in range(0,w,2*self.stripe_width): mask[:,x:x+self.stripe_width]=1
+            arr = np.array(img, dtype=np.float32) / 255.0  # HW
+            h, w = arr.shape
+            mask = np.zeros((h, w), dtype=np.float32)
+            if self.stripe_orientation == 'vertical':
+                for x in range(0, w, 2 * self.stripe_width):
+                    mask[:, x:x + self.stripe_width] = 1.0
             else:
-                for y in range(0,h,2*self.stripe_width): mask[y:y+self.stripe_width,:]=1
-            arr = arr*(1-self.alpha*mask) + 1.0*(self.alpha*mask)
-            img = transforms.ToPILImage()(np.clip(arr,0,1))
-            label = self.label_mapping.get(orig, orig)
-        if self.transform: img = self.transform(img)
+                for y in range(0, h, 2 * self.stripe_width):
+                    mask[y:y + self.stripe_width, :] = 1.0
+            arr = arr * (1.0 - self.alpha * mask) + 1.0 * (self.alpha * mask)  # stripe_value=1.0
+            img = transforms.ToPILImage()(np.clip(arr, 0.0, 1.0))
+
+            label = self.label_mapping[orig]
+
+        if self.transform:
+            img = self.transform(img)
         return img, label
