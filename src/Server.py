@@ -15,7 +15,7 @@ from src.model import *
 
 
 class Server:
-    def __init__(self, config):
+    def __init__(self, config, args):
         # RabbitMQ
         address = config["rabbit"]["address"]
         username = config["rabbit"]["username"]
@@ -33,6 +33,8 @@ class Server:
         self.save_parameters = config["server"]["parameters"]["save"]
         self.load_parameters = config["server"]["parameters"]["load"]
         self.validation = config["server"]["validation"]
+
+        self.args = args
 
         # Clients
         self.batch_size = config["learning"]["batch-size"]
@@ -193,9 +195,13 @@ class Server:
                     # Test
                     if self.save_parameters and self.validation and self.round_result:
                         state_dict_full = self.concatenate_and_avg_clusters()
-                        if not src.Validation.test(self.model_name, self.data_name, state_dict_full, self.logger):
+                        test_validate = src.Validation.test(self.model_name, self.data_name, state_dict_full, self.logger)
+                        if not test_validate:
                             self.logger.log_warning("Training failed!")
-                        else:
+                        if self.args.attack_mode != "normal":
+                            src.Validation.test_backdoor(self.model_name, self.data_name, state_dict_full,
+                                                         self.logger, self.args)
+                        if test_validate:
                             # Save to files
                             torch.save(state_dict_full, f'{self.model_name}_{self.data_name}.pth')
                             self.round -= 1
