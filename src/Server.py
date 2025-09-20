@@ -345,7 +345,7 @@ class Server:
                                         *nn.ModuleList(full_model.children())[layers[0]:layers[1]])
 
                                 state_dict = model_part.state_dict()
-                                self.logger.log_info("Model loaded successfully.")
+                                src.Log.print_with_color("Model loaded successfully.", "yellow")
                             else:
                                 if layer_id == 1:
                                     if layers == [0, 0]:
@@ -363,7 +363,7 @@ class Server:
                                     state_dict[key] = full_state_dict[key]
 
                         else:
-                            self.logger.log_info(f"File {filepath} does not exist.")
+                            src.Log.print_with_color(f"File {filepath} does not exist.", "yellow")
 
                     src.Log.print_with_color(f"[>>>] Sent start training request to client {client_id}", "red")
                     if layer_id == 1:
