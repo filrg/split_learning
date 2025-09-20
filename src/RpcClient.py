@@ -127,17 +127,19 @@ class RpcClient:
                 subset = torch.utils.data.Subset(self.train_set, selected_indices)
                 train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
                 if cut_layers[1] != 0:
-                    result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=False)
+                    result, size, bypass = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=False)
                 else:
-                    result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=True)
+                    result, size, bypass = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=True)
             else:
-                result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, None, self.cluster, special)
+                result, size, bypass = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, None, self.cluster, special)
 
             # Stop training, then send parameters to server
             model_state_dict = copy.deepcopy(self.model.state_dict())
             if self.device != "cpu":
                 for key in model_state_dict:
                     model_state_dict[key] = model_state_dict[key].to('cpu')
+            if bypass:
+                model_state_dict = None
             data = {"action": "UPDATE", "client_id": self.client_id, "layer_id": self.layer_id,
                     "result": result, "size": size, "cluster": self.cluster,
                     "message": "Sent parameters to Server", "parameters": model_state_dict}

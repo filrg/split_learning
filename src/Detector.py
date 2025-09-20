@@ -8,7 +8,7 @@ EPS = 1e-8
 
 
 # ---------- helpers ----------
-def _prepare_z(z: torch.Tensor) -> torch.Tensor:
+def _prepare_z(z: torch.Tensor):
     if not isinstance(z, torch.Tensor):
         z = torch.as_tensor(z)
     if z.ndim < 2:
@@ -18,7 +18,7 @@ def _prepare_z(z: torch.Tensor) -> torch.Tensor:
     return z
 
 
-def _energy_distance(X: np.ndarray, Y: np.ndarray) -> float:
+def _energy_distance(X: np.ndarray, Y: np.ndarray):
     if len(X) == 0 or len(Y) == 0: return 0.0
 
     def mpd(A, B): return np.mean(np.sqrt(((A[:, None, :] - B[None, :, :]) ** 2).sum(-1)))
@@ -27,7 +27,7 @@ def _energy_distance(X: np.ndarray, Y: np.ndarray) -> float:
     return float(2 * Exy - Exx - Eyy)
 
 
-def _label_margin(Z: np.ndarray, l: int) -> np.ndarray:
+def _label_margin(Z: np.ndarray, l: int):
     top_other = np.max(Z[:, np.arange(Z.shape[1]) != l], axis=1)
     return Z[:, l] - top_other
 
@@ -70,7 +70,7 @@ class ZPerLabelRuleDetectorOnline:
         self.meps = float(margin_eps)
         self.consecutive = int(consecutive)
 
-        random.seed(seed);
+        random.seed(seed)
         np.random.seed(seed)
 
         # Bộ đệm logits: (client,label) -> deque[np.ndarray(C,)]
@@ -84,7 +84,7 @@ class ZPerLabelRuleDetectorOnline:
         self.flags = defaultdict(lambda: defaultdict(lambda: deque(maxlen=self.consecutive)))
 
     # ---- baseline hiện tại của nhãn l (loại client này) ----
-    def _baseline_Y(self, label: int, exclude_client: str) -> np.ndarray:
+    def _baseline_Y(self, label: int, exclude_client: str):
         pool = []
         for (cid, lab), dq in self.buf.items():
             if lab != label or cid == exclude_client or len(dq) == 0: continue
@@ -97,12 +97,12 @@ class ZPerLabelRuleDetectorOnline:
             pool = pool[:self.CAP]
         return np.asarray(pool, dtype=np.float64)
 
-    def _proto(self, label: int) -> np.ndarray | None:
+    def _proto(self, label: int):
         if self.proto_cnt[label] >= 50:
             return self.proto_sum[label] / max(1, self.proto_cnt[label])
         return None
 
-    def _median_others(self, label: int, client_id: str) -> tuple[float, float] | tuple[None, None]:
+    def _median_others(self, label: int, client_id: str):
         others = [v for cid, v in self.latest_metrics[label].items() if cid != client_id]
         if len(others) >= 3:
             medE = np.median([o["energy"] for o in others])

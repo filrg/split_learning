@@ -18,7 +18,7 @@ def _safe_torch_save(path: str, obj: dict):
     os.replace(tmp, path)  # atomic on most OS
 
 
-def _prepare_z(z: torch.Tensor, reduce_spatial: str = "mean") -> torch.Tensor:
+def _prepare_z(z: torch.Tensor, reduce_spatial: str = "mean"):
     """
     Chuẩn hoá logits về (B, C).
     - Nếu z có dạng (B, C, H, W, ...) thì gộp các chiều không gian theo 'mean' hoặc 'max'.
@@ -72,7 +72,7 @@ class ZLogger:
             epoch: Optional[int] = None,
             step: Optional[int] = None,
             extra: Optional[Dict] = None,
-    ) -> List[str]:
+    ):
         """
         Ghi một batch vào nhiều shard theo từng nhãn.
         Trả về danh sách đường dẫn shard đã ghi.
@@ -142,7 +142,7 @@ class ZReader:
         if not os.path.exists(self.manifest_path):
             raise FileNotFoundError(f"Manifest not found: {self.manifest_path}")
 
-    def load_manifest(self) -> List[Dict]:
+    def load_manifest(self):
         rows = []
         with open(self.manifest_path, "r", encoding="utf-8") as fr:
             for line in fr:
@@ -152,7 +152,7 @@ class ZReader:
                 rows.append(json.loads(line))
         return rows
 
-    def query(self, *, client_id: Optional[str] = None, label: Optional[int] = None) -> List[Dict]:
+    def query(self, *, client_id: Optional[str] = None, label: Optional[int] = None):
         rows = self.load_manifest()
         out = []
         for r in rows:
@@ -174,7 +174,7 @@ class ZReader:
             yield rec, z
 
     def load_all(self, *, client_id: Optional[str] = None, label: Optional[int] = None,
-                 max_rows: Optional[int] = None) -> torch.Tensor:
+                 max_rows: Optional[int] = None):
         """
         Nối tất cả z thỏa điều kiện thành một tensor [N, C].
         Cẩn thận RAM nếu N lớn!
@@ -194,7 +194,7 @@ class ZReader:
             return torch.empty(0, 0)
         return torch.cat(zs, dim=0)
 
-    def quick_stats(self, *, client_id: Optional[str] = None, label: Optional[int] = None) -> Dict:
+    def quick_stats(self, *, client_id: Optional[str] = None, label: Optional[int] = None):
         """
         Tính số shard, tổng N, và mean logits (nếu đủ nhỏ để gom).
         """

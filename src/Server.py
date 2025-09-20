@@ -501,6 +501,13 @@ class Server:
             if not state_dicts or not weights:
                 self.local_avg_state_dict[cluster].append({})
                 continue
+
+            indices = [i for i, v in enumerate(state_dicts) if v is None]
+            if len(indices) > 0:
+                src.Log.print_with_color(f"[===] Remove list clients from avg all state_dict: {indices}", "yellow")
+            state_dicts = [v for i, v in enumerate(state_dicts) if i not in indices]
+            weights = [v for i, v in enumerate(weights) if i not in indices]
+
             avg_sd = src.Utils.fedavg_state_dicts(state_dicts, weights=weights)
             self.local_avg_state_dict[cluster].append(avg_sd)
 
