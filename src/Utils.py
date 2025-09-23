@@ -74,6 +74,7 @@ def fedavg_state_dicts(state_dicts: list[dict], weights: list[float]=None):
     Trả về một dict {param_name: tensor_avg}
     """
     num = len(state_dicts)
+    print(f"len state_dict = {num}, len weights = {len(weights) if weights else None}")
     if num == 0:
         raise ValueError("fedavg_state_dicts: không có state_dict nào để trung bình.")
 

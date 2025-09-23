@@ -22,9 +22,6 @@ class Scheduler:
         self.data_count = 0
         self.round = 0
 
-        self.all_backward = []
-        self.all_forward = []
-
         self.event_time = args.event_time
         self.time_event_forward = []
         self.time_event_backward = []
@@ -113,17 +110,21 @@ class Scheduler:
                 if method_frame and body:
                     num_backward += 1
                     received_data = pickle.loads(body)
-                    gradient_numpy = received_data["data"]
-                    gradient = torch.tensor(gradient_numpy).to(self.device)
-                    data_id = received_data["data_id"]
                     require_stop = received_data["stop"]
                     if require_stop:
                         break
 
-                    data_input = data_store.pop(data_id)
-                    output = model(data_input)
-                    output.backward(gradient=gradient)
-                    optimizer.step()
+                    gradient_numpy = received_data["data"]
+                    gradient = torch.tensor(gradient_numpy).to(self.device)
+                    data_id = received_data["data_id"]
+
+                    try:
+                        data_input = data_store.pop(data_id)
+                        output = model(data_input)
+                        output.backward(gradient=gradient)
+                        optimizer.step()
+                    except KeyError:
+                        continue
                 else:
                     # speed control
                     if len(data_store) > control_count:
@@ -183,12 +184,12 @@ class Scheduler:
         print('Waiting for intermediate output. To exit press CTRL+C')
         model.to(self.device)
 
-        # logger = ZLogger(root="z_store", reduce_spatial="mean")
+        logger = ZLogger(root="z_store", reduce_spatial="mean")
 
         detection = True
         det = ZPerLabelRuleDetectorOnline(n_classes=10, per_client_limit=100, store_per_batch=64, baseline_cap=512,
                                           min_client_points=64, min_baseline_points=128,
-                                          thr_energy=2.5, thr_centroid=2.3, margin_eps=0.0, consecutive=10)
+                                          thr_energy=2.5, thr_centroid=2.3, consecutive=10)
 
         while True:
             # Training model
@@ -204,23 +205,21 @@ class Scheduler:
                 labels = received_data["label"].to(self.device)
                 label_count = received_data["label_count"]
 
-                # self.all_forward.append({'client': trace[-1], 'data': intermediate_output_numpy})
-
                 intermediate_output = torch.tensor(intermediate_output_numpy, requires_grad=True).to(self.device)
 
                 output = model(intermediate_output)
 
+                require_stop = False
                 if detection:
                     summary, per_label = det.update_batch(z=output, y=labels, client_id=str(trace[-1]).split('-')[0])
-                    require_stop = False
                     if summary["any_label_flagged"]:
                         print("ALERT", summary["client_id"], "labels:", summary["flagged_labels"])
                         require_stop = True
                         for l in summary["flagged_labels"]:
                             print({k: per_label[l][k] for k in
-                                   ["energy_ratio", "centroid_ratio", "margin_anom", "recent_flags"]})
+                                   ["energy_ratio", "centroid_ratio", "recent_flags"]})
 
-                # logger.log_batch(client_id=str(trace[-1]).split('-')[0], z=output, y=labels, epoch=self.round)
+                logger.log_batch(client_id=str(trace[-1]).split('-')[0], z=output, y=labels, epoch=self.round)
 
                 loss = criterion(output, labels)
                 if torch.isnan(loss).any():
@@ -236,7 +235,6 @@ class Scheduler:
 
                 gradient = intermediate_output.grad
                 # save data: gradient.detach().cpu().numpy()
-                # self.all_backward.append({'client': trace[-1], 'data': gradient.detach().cpu().numpy()})
 
                 self.send_gradient(data_id, gradient, trace, require_stop)  # 1F1B
             # Check training process
@@ -382,17 +380,5 @@ class Scheduler:
         else:
             result, bypass = self.train_on_middle_layer(model, global_model, label_count, lr, momentum, clip_grad_norm,
                                                         compute_loss, control_count, cluster=cluster, special=special)
-
-        # if self.layer_id == num_layers:
-        #     with open(f"storage/save_gradient_{self.round}.pkl", "wb") as f:
-        #         pickle.dump(self.all_backward, f)
-        #     with open(f"storage/save_forward_{self.round}.pkl", "wb") as f:
-        #         pickle.dump(self.all_forward, f)
-        self.round += 1
-        self.all_backward = []
-        self.all_forward = []
-
-        # with open(f"storage/save_gradient_{self.round}.pkl", "rb") as f:
-        #     loaded_list = pickle.load(f)
 
         return result, self.data_count, bypass

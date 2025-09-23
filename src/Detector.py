@@ -39,11 +39,9 @@ class ZPerLabelRuleDetectorOnline:
     Logic quyết định:
         suspicious_now = (energy_ratio >= thr_energy)
                          AND (centroid_ratio >= thr_centroid)
-                         AND (margin_anom > margin_eps)
 
     - energy_ratio = energy / median_energy_others
     - centroid_ratio = centroid_shift / median_centroid_others
-    - margin_anom = max(0, mean_margin_baseline - mean_margin_client)
     """
 
     def __init__(self,
@@ -55,7 +53,6 @@ class ZPerLabelRuleDetectorOnline:
                  min_baseline_points: int = 128,
                  thr_energy: float = 2.5,  # ngưỡng tỉ lệ energy
                  thr_centroid: float = 2.3,  # ngưỡng tỉ lệ centroid_shift
-                 margin_eps: float = 0.0,  # yêu cầu margin_anom > margin_eps
                  consecutive: int = 2,
                  seed: int = 42):
         self.C = int(n_classes)
@@ -67,7 +64,6 @@ class ZPerLabelRuleDetectorOnline:
 
         self.thE = float(thr_energy)
         self.thC = float(thr_centroid)
-        self.meps = float(margin_eps)
         self.consecutive = int(consecutive)
 
         random.seed(seed)
@@ -93,7 +89,7 @@ class ZPerLabelRuleDetectorOnline:
             take = min(max(1, self.CAP // 8), len(arr))
             pool.extend(arr[:take])
         if len(pool) > self.CAP:
-            random.shuffle(pool);
+            random.shuffle(pool)
             pool = pool[:self.CAP]
         return np.asarray(pool, dtype=np.float64)
 
@@ -150,7 +146,7 @@ class ZPerLabelRuleDetectorOnline:
                 # vẫn cập nhật prototype để ấm máy
                 proto = self._proto(l)
                 if proto is None:
-                    self.proto_sum[l] += Zi.sum(0);
+                    self.proto_sum[l] += Zi.sum(0)
                     self.proto_cnt[l] += len(Zi)
                 per_label[l] = {
                     "present_in_batch": True,
@@ -169,7 +165,6 @@ class ZPerLabelRuleDetectorOnline:
                 # proxy: dùng mean baseline khi chưa đủ ấm máy
                 proto = Yb.mean(0)
             cshift = float(np.linalg.norm(X.mean(0) - proto))
-            margin_anom = max(0.0, _label_margin(Yb, l).mean() - _label_margin(X, l).mean())
 
             # Lưu metric để tính median others về sau
             self.latest_metrics[l][client_id] = dict(energy=energy, cshift=cshift)
@@ -186,10 +181,9 @@ class ZPerLabelRuleDetectorOnline:
 
             re = energy / (medE + EPS)
             rc = cshift / (medC + EPS)
-            ma = margin_anom
 
             # --- quyết định theo rule mới ---
-            suspicious_now = (re >= self.thE) and (rc >= self.thC) and (ma > self.meps)
+            suspicious_now = (re >= self.thE) and (rc >= self.thC)
 
             # consecutive
             self.flags[client_id][l].append(1 if suspicious_now else 0)
@@ -200,14 +194,14 @@ class ZPerLabelRuleDetectorOnline:
 
             # chỉ cập nhật prototype bằng dữ liệu KHÔNG bị cờ
             if not suspicious_now:
-                self.proto_sum[l] += Zi.sum(0);
+                self.proto_sum[l] += Zi.sum(0)
                 self.proto_cnt[l] += len(Zi)
 
             per_label[l] = {
                 "present_in_batch": True,
                 "stored_client": int(len(X)),
                 "baseline": int(len(Yb)),
-                "energy": energy, "centroid_shift": cshift, "margin_anom": ma,
+                "energy": energy, "centroid_shift": cshift,
                 "energy_ratio": re, "centroid_ratio": rc,
                 "suspicious_now": suspicious_now,
                 "recent_flags": list(self.flags[client_id][l])[-self.consecutive:],
@@ -220,6 +214,6 @@ class ZPerLabelRuleDetectorOnline:
             "any_label_flagged": any_flag,
             "flagged_labels": [l for l, info in per_label.items() if info.get("suspicious_consecutive", False)],
             "consecutive": self.consecutive,
-            "thresholds": {"energy_ratio": self.thE, "centroid_ratio": self.thC, "margin_eps": self.meps}
+            "thresholds": {"energy_ratio": self.thE, "centroid_ratio": self.thC}
         }
         return summary, per_label
