@@ -1,32 +1,42 @@
 from sklearn.cluster import KMeans, AffinityPropagation
-from sklearn.metrics import silhouette_score
-import copy
+from sklearn.preprocessing import normalize
 import numpy as np
-from src.Utils import num_client_in_cluster
 
+def clustering_algorithm(label_counts, client_cluster_config):
+    if client_cluster_config["cluster"] == "AffinityPropagation":
+        return Affinity_Propagation(label_counts, client_cluster_config["AffinityPropagation"])
+    elif client_cluster_config["cluster"] == "KMeans":
+        return K_Means(label_counts, client_cluster_config["KMeans"])
 
-def clustering_algorithm(list_performance, num, client_cluster_config, partition):
-    return clustering_AffinityPropagation(list_performance, num, client_cluster_config["AffinityPropagation"], partition)
+def Affinity_Propagation(label_counts, config):
+    infor_cluster = []
+    damping = config['damping']
+    max_iter = config['max_iter']
+    label_counts = normalize(label_counts, norm='l1', axis=1)
+    ap = AffinityPropagation(damping=damping, max_iter=max_iter, random_state=42)
+    ap.fit(label_counts)
 
+    labels = ap.labels_
+    counts = np.bincount(labels)
+    for count in counts:
+        infor_cluster.append([count])
 
-def clustering_AffinityPropagation(list_performance, num, config, partition=None):
-    if partition is None:
-        label_counts = []
-        for i in list_performance:
-            if i != -1:
-                label_counts.append(i)
-        damping = config['damping']
-        max_iter = config['max_iter']
-        affinity_propagation = AffinityPropagation(damping=damping, max_iter=max_iter)
-        affinity_propagation.fit(np.array(label_counts).reshape(-1, 1))
+    num_cluster = len(np.unique(labels))
 
-        cluster_centers_indices = affinity_propagation.cluster_centers_indices_
-        labels = affinity_propagation.labels_
-        labels = labels.tolist()
+    return labels, infor_cluster, num_cluster
 
-        return list_performance, None, None, None
-    else:
-        list_cut_layer = partition["cut-layers"]
-        num_cluster = partition["num-cluster"]
-        infor_cluster = partition["infor-cluster"]
-        return list_performance, infor_cluster, num_cluster, list_cut_layer
+def K_Means(label_counts, config):
+
+    infor_cluster = []
+
+    num_cluster = config['num-cluster']
+    label_counts = normalize(label_counts, norm='l1', axis=1)
+    kmeans = KMeans(n_clusters= num_cluster, random_state=42)
+    kmeans.fit(label_counts)
+    labels = kmeans.labels_
+
+    counts = np.bincount(labels)
+    for count in counts:
+        infor_cluster.append([count])
+
+    return labels, infor_cluster, num_cluster

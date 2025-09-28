@@ -7,7 +7,7 @@ server:
     - 1
   no-cluster:
     cut-layers: [7]
-  cluster:
+  manual-cluster:
     num-cluster: 1
     cut-layers:
       - [7]
@@ -29,13 +29,14 @@ server:
   random-seed: 1
   client-cluster:
     enable: False
-    auto-partition: False
-    syn-cut-layers: False
+    auto-cluster: False
     special: False
     cluster: AffinityPropagation
     AffinityPropagation:
       damping: 0.9
       max_iter: 1000
+    KMeans:
+      num-cluster: 1
 
 rabbit:
   address: 127.0.0.1
@@ -59,3 +60,7 @@ learning:
     ReBaFL:
       mu: 0.01
       lambda_aug: 0.1
+
+profiling:
+  round-test: 1
+  batch-size: 32

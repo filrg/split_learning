@@ -1,6 +1,5 @@
 import time
 import pickle
-import pika
 import random
 import copy
 import torchvision
@@ -15,23 +14,19 @@ from src.model import *
 
 
 class RpcClient:
-    def __init__(self, client_id, layer_id, address, username, password, train_func, device):
+    def __init__(self, client_id, layer_id, channel, train_func, device):
         self.client_id = client_id
         self.layer_id = layer_id
-        self.address = address
-        self.username = username
-        self.password = password
+        self.channel = channel
         self.train_func = train_func
         self.device = device
 
-        self.channel = None
         self.connection = None
         self.response = None
         self.model = None
         self.global_model = None
         self.cluster = None
         self.label_count = None
-        self.connect()
 
         self.train_set = None
         self.label_to_indices = None
@@ -94,6 +89,7 @@ class RpcClient:
                     self.train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
                                                                   transform=transform_train)
                 else:
+                    self.train_set = None
                     raise ValueError(f"Data name '{data_name}' is not valid.")
 
                 self.label_to_indices = defaultdict(list)
@@ -169,13 +165,8 @@ class RpcClient:
         elif action == "STOP":
             return False
 
-    def connect(self):
-        credentials = pika.PlainCredentials(self.username, self.password)
-        self.connection = pika.BlockingConnection(pika.ConnectionParameters(self.address, 5672, '/', credentials))
-        self.channel = self.connection.channel()
 
     def send_to_server(self, message):
-        self.connect()
         self.response = None
 
         self.channel.queue_declare('rpc_queue', durable=False)
