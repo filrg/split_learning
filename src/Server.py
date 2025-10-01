@@ -94,6 +94,7 @@ class Server:
         self.infor_cluster = None
         self.current_infor_cluster = None
         self.local_update_count = 0
+        self.reject = False
 
         self.channel.basic_qos(prefetch_count=1)
         self.reply_channel = self.connection.channel()
@@ -108,6 +109,47 @@ class Server:
         if self.non_iid:
             label_distribution = np.random.dirichlet([self.data_distribution["dirichlet"]["alpha"]] * self.num_label,
                                                      self.total_clients[0])
+            # label_distribution = np.array([
+            #     [1.88670492e-04, 2.78323802e-01, 1.13726152e-02, 1.24349201e-01,
+            #      5.38795539e-04, 1.90184440e-01, 6.43625090e-02, 2.54724837e-01,
+            #      7.59550521e-02, 7.76595921e-08],
+            #
+            #     [7.86644625e-06, 1.43142597e-09, 9.23733736e-02, 1.41117583e-03,
+            #      5.57904425e-01, 4.59899388e-03, 2.67154361e-02, 6.79897381e-02,
+            #      1.90655112e-04, 2.48808334e-01],
+            #
+            #     [1.28974551e-03, 7.09386721e-02, 1.48008106e-01, 1.34067660e-01,
+            #      6.63072091e-02, 2.32514706e-04, 9.58605190e-04, 3.68931950e-03,
+            #      4.65252553e-02, 5.27982912e-01],
+            #
+            #     [1.47841723e-02, 8.78359666e-03, 4.55327204e-01, 1.57679071e-06,
+            #      2.85479330e-01, 9.25068105e-04, 2.12506510e-01, 1.36979009e-03,
+            #      1.40011779e-02, 6.82157427e-03],
+            #
+            #     [1.90630425e-06, 2.25567241e-02, 8.21096538e-01, 3.25336373e-05,
+            #      1.31714757e-03, 5.89168566e-02, 1.69602744e-06, 6.43260198e-06,
+            #      8.83353304e-09, 9.60701568e-02],
+            #
+            #     [3.53581329e-01, 8.26254786e-02, 1.01462752e-03, 3.96087356e-01,
+            #      1.60483180e-04, 4.51104455e-03, 4.13400181e-02, 9.78326450e-07,
+            #      7.11202637e-06, 1.20671573e-01],
+            #
+            #     [9.49379988e-05, 4.65601685e-02, 6.32840557e-03, 4.47674790e-03,
+            #      8.49202122e-02, 8.56501663e-09, 2.58490916e-01, 3.96866660e-01,
+            #      2.01766516e-01, 4.95426887e-04],
+            #
+            #     [2.08492514e-02, 4.09489645e-02, 9.72125652e-02, 1.90336896e-02,
+            #      3.90847431e-04, 1.29940518e-01, 4.96233948e-04, 6.49792721e-01,
+            #      3.98916100e-02, 1.44359867e-03],
+            #
+            #     [7.07523146e-02, 4.22245806e-08, 4.25533228e-02, 3.42306651e-04,
+            #      7.68246482e-01, 7.34896463e-02, 4.41445349e-02, 4.66822655e-04,
+            #      6.75889808e-12, 4.52780196e-06],
+            #
+            #     [9.30039177e-05, 9.77639318e-06, 2.95348498e-02, 2.12082532e-02,
+            #      1.18523841e-14, 8.28632986e-04, 8.09996300e-01, 1.24028178e-03,
+            #      1.36135136e-01, 9.53766212e-04]
+            # ])
 
             self.label_counts = (label_distribution * self.num_sample).astype(int)
         else:
@@ -385,18 +427,24 @@ class Server:
                                     "label_count": label,
                                     "cluster": clustering,
                                     "special": self.special}
-                    else:
+                        self.send_to_response(client_id, pickle.dumps(response))
 
-                        response = {"action": "STOP",
-                                    "message": "Reject Device",
-                                    "parameters": None}
+                    else:
+                        if self.reject is False:
+                            response = {"action": "STOP",
+                                        "message": "Reject Device",
+                                        "parameters": None}
+
+                            self.send_to_response(client_id, pickle.dumps(response))
 
                 else:
                     src.Log.print_with_color(f"[>>>] Sent stop training request to client {client_id}", "red")
                     response = {"action": "STOP",
                                 "message": "Stop training!",
                                 "parameters": None}
-                self.send_to_response(client_id, pickle.dumps(response))
+                    self.send_to_response(client_id, pickle.dumps(response))
+
+            self.reject = True
 
         if cluster is not None and special is True:
             for (client_id, layer_id, _, clustering) in self.list_clients:
@@ -541,6 +589,21 @@ class Server:
 
             self.num_cluster = 1
             self.infor_cluster = [self.total_clients]
+
+            self.list_cut_layers = []
+            exe_time_layer_1 = []
+            net_layer_1 = []
+            exe_time_layer_2 = []
+            net_layer_2 = []
+            for (client_id, layer_id, performance, cluster, exe_time, net, label, train) in self.list_clients:
+                if layer_id == 1:
+                    exe_time_layer_1.append(exe_time)
+                    net_layer_1.append(net)
+                else:
+                    exe_time_layer_2.append(exe_time)
+                    net_layer_2.append(net)
+            cut_point = partition(exe_time_layer_1, net_layer_1, exe_time_layer_2, net_layer_2, self.size_data)
+            self.list_cut_layers.append(cut_point)
 
         self.local_model_parameters = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
         self.local_client_sizes = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
