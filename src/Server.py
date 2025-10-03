@@ -37,6 +37,9 @@ class Server:
         self.load_parameters = config["server"]["parameters"]["load"]
         self.validation = config["server"]["validation"]
 
+        # Time training
+        self.config_time = config["server"]["limited-time"]
+
         # Clients
         self.batch_size = config["learning"]["batch-size"]
         self.lr = config["learning"]["learning-rate"]
@@ -342,7 +345,8 @@ class Server:
                                     "clip_grad_norm": self.clip_grad_norm,
                                     "label_count": None,
                                     "cluster": None,
-                                    "special": False}
+                                    "special": False,
+                                    "config_time": self.config_time}
 
                         self.send_to_response(client_id, pickle.dumps(response))
 
@@ -426,7 +430,8 @@ class Server:
                                     "compute_loss": self.compute_loss,
                                     "label_count": label,
                                     "cluster": clustering,
-                                    "special": self.special}
+                                    "special": self.special,
+                                    "config_time": self.config_time}
                         self.send_to_response(client_id, pickle.dumps(response))
 
                     else:
@@ -474,7 +479,8 @@ class Server:
                                     "clip_grad_norm": self.clip_grad_norm,
                                     "label_count": None,
                                     "cluster": None,
-                                    "special": True}
+                                    "special": True,
+                                    "config_time": None}
                         self.send_to_response(client_id, pickle.dumps(response))
 
     def cluster_and_selection(self):

@@ -55,6 +55,7 @@ class RpcClient:
             num_layers = self.response['num_layers']
             clip_grad_norm = self.response['clip_grad_norm']
             data_name = self.response["data_name"]
+            config_time = self.response["config_time"]
 
             if self.label_count is None:
                 self.label_count = label_count
@@ -145,7 +146,7 @@ class RpcClient:
                 subset = torch.utils.data.Subset(self.train_set, selected_indices)
                 train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
                 if cut_layers[1] != 0:
-                    result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=False)
+                    result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=False, config_time=config_time)
                 else:
                     result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=True)
             else:

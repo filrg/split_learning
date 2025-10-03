@@ -75,65 +75,85 @@ class Scheduler:
                                    body=pickle.dumps(message))
 
     def train_on_first_layer(self, model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, control_count=5,
-                             train_loader=None, cluster=None, special=False):
+                             train_loader=None, cluster=None, special=False, config_time=None):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
-        data_iter = iter(train_loader)
+
+        mode_limited_time = config_time["enable"]
+        limited_time = config_time["time"]
 
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
         self.channel.queue_declare(queue=backward_queue_name, durable=False)
-        self.channel.basic_qos(prefetch_count=10)
-        num_forward = 0
-        num_backward = 0
-        end_data = False
-        data_store = {}
-
+        self.channel.basic_qos(prefetch_count=1)
+        start = time.time()
         model.to(self.device)
-        with tqdm(total=len(train_loader), desc="Processing", unit="step") as pbar:
-            while True:
-                # Training model
-                model.train()
-                optimizer.zero_grad()
-                # Process gradient
-                method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
-                if method_frame and body:
-                    num_backward += 1
-                    received_data = pickle.loads(body)
-                    gradient_numpy = received_data["data"]
-                    gradient = torch.tensor(gradient_numpy).to(self.device)
-                    data_id = received_data["data_id"]
 
-                    data_input = data_store.pop(data_id)
-                    output = model(data_input)
-                    output.backward(gradient=gradient)
-                    optimizer.step()
-                else:
-                    # speed control
-                    if len(data_store) > control_count:
-                        continue
-                    # Process forward message
-                    try:
-                        training_data, labels = next(data_iter)
-                        training_data = training_data.to(self.device)
-                        data_id = uuid.uuid4()
-                        data_store[data_id] = training_data
-                        intermediate_output = model(training_data)
-                        intermediate_output = intermediate_output.detach().requires_grad_(True)
+        for i in range(100):
+            data_iter = iter(train_loader)
+            num_forward = 0
+            num_backward = 0
+            end_data = False
+            end_training = False
+            data_store = {}
 
-                        # Send to next layers
-                        num_forward += 1
-                        self.data_count += 1
-                        # tqdm bar
-                        pbar.update(1)
+            with tqdm(total=len(train_loader), desc="Processing", unit="step") as pbar:
+                while True:
+                    # Training model
+                    model.train()
+                    optimizer.zero_grad()
+                    # Process gradient
+                    method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
+                    if method_frame and body:
+                        num_backward += 1
+                        received_data = pickle.loads(body)
+                        gradient_numpy = received_data["data"]
+                        gradient = torch.tensor(gradient_numpy).to(self.device)
+                        data_id = received_data["data_id"]
 
-                        self.send_intermediate_output(data_id, label_count, intermediate_output, labels, trace=None, test=False, cluster=cluster, special=special)
+                        data_input = data_store.pop(data_id)
+                        output = model(data_input)
+                        output.backward(gradient=gradient)
+                        optimizer.step()
+                    else:
+                        # speed control
+                        if len(data_store) > control_count:
+                            continue
+                        # Process forward message
+                        if (time.time() - start) > limited_time:
+                            if i > 0:
+                                end_data = True
+                                end_training = True
+                            else:
+                                end_training = True
+                        else:
+                            try:
+                                training_data, labels = next(data_iter)
+                                training_data = training_data.to(self.device)
+                                data_id = uuid.uuid4()
+                                data_store[data_id] = training_data
+                                intermediate_output = model(training_data)
+                                intermediate_output = intermediate_output.detach().requires_grad_(True)
 
-                    except StopIteration:
-                        end_data = True
-                if end_data and (num_forward == num_backward):
+                                # Send to next layers
+                                num_forward += 1
+                                self.data_count += 1
+                                # tqdm bar
+                                pbar.update(1)
+
+                                self.send_intermediate_output(data_id, label_count, intermediate_output, labels, trace=None, test=False, cluster=cluster, special=special)
+
+                            except StopIteration:
+                                end_data = True
+
+                    if end_data and (num_forward == num_backward):
+                        if mode_limited_time is False:
+                            end_training = True
+                        break
+
+                if end_training is True:
                     break
 
-            notify_data = {"action": "NOTIFY", "client_id": self.client_id, "layer_id": self.layer_id,
-                           "message": "Finish training!", "cluster": cluster}
+        notify_data = {"action": "NOTIFY", "client_id": self.client_id, "layer_id": self.layer_id,
+                        "message": "Finish training!", "cluster": cluster}
 
         # Finish epoch training, send notify to server
         src.Log.print_with_color("[>>>] Finish training!", "red")
@@ -159,7 +179,7 @@ class Scheduler:
         else:
             forward_queue_name = f'intermediate_queue_{self.layer_id - 1}_{cluster}'
         self.channel.queue_declare(queue=forward_queue_name, durable=False)
-        self.channel.basic_qos(prefetch_count=10)
+        self.channel.basic_qos(prefetch_count=1)
         print('Waiting for intermediate output. To exit press CTRL+C')
         model.to(self.device)
         while True:
@@ -229,7 +249,7 @@ class Scheduler:
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
         self.channel.queue_declare(queue=forward_queue_name, durable=False)
         self.channel.queue_declare(queue=backward_queue_name, durable=False)
-        self.channel.basic_qos(prefetch_count=10)
+        self.channel.basic_qos(prefetch_count=1)
         data_store = {}
         print('Waiting for intermediate output. To exit press CTRL+C')
         model.to(self.device)
@@ -337,11 +357,11 @@ class Scheduler:
                     return True
             time.sleep(0.5)
 
-    def train_on_device(self, model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader=None, cluster=None, special=False, alone_train=False):
+    def train_on_device(self, model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader=None, cluster=None, special=False, alone_train=False, config_time=None):
         self.data_count = 0
         if self.layer_id == 1:
             if alone_train is False:
-                result = self.train_on_first_layer(model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, control_count, train_loader, cluster, special)
+                result = self.train_on_first_layer(model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, control_count, train_loader, cluster, special, config_time)
             else:
                 result = self.alone_training(model, global_model, label_count, lr, momentum, clip_grad_norm, compute_loss, train_loader=train_loader, cluster=cluster)
         elif self.layer_id == num_layers:
