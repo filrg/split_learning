@@ -1,176 +1,185 @@
+import torch
 import torch.nn as nn
 
 class MobileNetv1_CIFAR10(nn.Module):
-    def __init__(self):
+    def __init__(self, start_layer=0, end_layer=84):
         super(MobileNetv1_CIFAR10, self).__init__()
-        self.layer1 = nn.Conv2d(3, 32, kernel_size=3, stride=1, padding=1)
-        self.layer2 = nn.BatchNorm2d(32)
-        self.layer3 = nn.ReLU()
-        self.layer4 = nn.Conv2d(32, 32, kernel_size=3, stride=1, padding=1)
-        self.layer5 = nn.BatchNorm2d(32)
-        self.layer6 = nn.ReLU()
-        self.layer7 = nn.Conv2d(32, 64, kernel_size=1, stride=1)
-        self.layer8 = nn.BatchNorm2d(64)
-        self.layer9 = nn.ReLU()
-        self.layer10 = nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1)
-        self.layer11 = nn.BatchNorm2d(64)
-        self.layer12 = nn.ReLU()
-        self.layer13 = nn.Conv2d(64, 128, kernel_size=1, stride=1)
-        self.layer14 = nn.BatchNorm2d(128)
-        self.layer15 = nn.ReLU()
-        self.layer16 = nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1)
-        self.layer17 = nn.BatchNorm2d(128)
-        self.layer18 = nn.ReLU()
-        self.layer19 = nn.Conv2d(128, 128, kernel_size=1, stride=1)
-        self.layer20 = nn.BatchNorm2d(128)
-        self.layer21 = nn.ReLU()
-        self.layer22 = nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1)
-        self.layer23 = nn.BatchNorm2d(128)
-        self.layer24 = nn.ReLU()
-        self.layer25 = nn.Conv2d(128, 256, kernel_size=1, stride=1)
-        self.layer26 = nn.BatchNorm2d(256)
-        self.layer27 = nn.ReLU()
-        self.layer28 = nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1)
-        self.layer29 = nn.BatchNorm2d(256)
-        self.layer30 = nn.ReLU()
-        self.layer31 = nn.Conv2d(256, 256, kernel_size=1, stride=1)
-        self.layer32 = nn.BatchNorm2d(256)
-        self.layer33 = nn.ReLU()
-        self.layer34 = nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1)
-        self.layer35 = nn.BatchNorm2d(256)
-        self.layer36 = nn.ReLU()
-        self.layer37 = nn.Conv2d(256, 512, kernel_size=1, stride=1)
-        self.layer38 = nn.BatchNorm2d(512)
-        self.layer39 = nn.ReLU()
-        self.layer40 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
-        self.layer41 = nn.BatchNorm2d(512)
-        self.layer42 = nn.ReLU()
-        self.layer43 = nn.Conv2d(512, 512, kernel_size=1, stride=1)
-        self.layer44 = nn.BatchNorm2d(512)
-        self.layer45 = nn.ReLU()
-        self.layer46 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
-        self.layer47 = nn.BatchNorm2d(512)
-        self.layer48 = nn.ReLU()
-        self.layer49 = nn.Conv2d(512, 512, kernel_size=1, stride=1)
-        self.layer50 = nn.BatchNorm2d(512)
-        self.layer51 = nn.ReLU()
-        self.layer52 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
-        self.layer53 = nn.BatchNorm2d(512)
-        self.layer54 = nn.ReLU()
-        self.layer55 = nn.Conv2d(512, 512, kernel_size=1, stride=1)
-        self.layer56 = nn.BatchNorm2d(512)
-        self.layer57 = nn.ReLU()
-        self.layer58 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
-        self.layer59 = nn.BatchNorm2d(512)
-        self.layer60 = nn.ReLU()
-        self.layer61 = nn.Conv2d(512, 512, kernel_size=1, stride=1)
-        self.layer62 = nn.BatchNorm2d(512)
-        self.layer63 = nn.ReLU()
-        self.layer64 = nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1)
-        self.layer65 = nn.BatchNorm2d(512)
-        self.layer66 = nn.ReLU()
-        self.layer67 = nn.Conv2d(512, 512, kernel_size=1, stride=1)
-        self.layer68 = nn.BatchNorm2d(512)
-        self.layer69 = nn.ReLU()
-        self.layer70 = nn.Conv2d(512, 512, kernel_size=3, stride=2, padding=1)
-        self.layer71 = nn.BatchNorm2d(512)
-        self.layer72 = nn.ReLU()
-        self.layer73 = nn.Conv2d(512, 1024, kernel_size=1, stride=1)
-        self.layer74 = nn.BatchNorm2d(1024)
-        self.layer75 = nn.ReLU()
-        self.layer76 = nn.Conv2d(1024, 1024, kernel_size=3, stride=1, padding=1)
-        self.layer77 = nn.BatchNorm2d(1024)
-        self.layer78 = nn.ReLU()
-        self.layer79 = nn.Conv2d(1024, 1024, kernel_size=1, stride=1)
-        self.layer80 = nn.BatchNorm2d(1024)
-        self.layer81 = nn.ReLU()
-        self.layer82 = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.layer83 = nn.Flatten(1, -1)
-        self.layer84 = nn.Linear(1024, 10)
+        self.start_layer = start_layer
+        self.end_layer = end_layer
+
+        if start_layer < 1 <= end_layer:
+            self.layer1 = nn.Conv2d(3, 32, 3, 1, 1)
+        if start_layer < 2 <= end_layer:
+            self.layer2 = nn.BatchNorm2d(32)
+        if start_layer < 3 <= end_layer:
+            self.layer3 = nn.ReLU()
+        if start_layer < 4 <= end_layer:
+            self.layer4 = nn.Conv2d(32, 32, 3, 1, 1)
+        if start_layer < 5 <= end_layer:
+            self.layer5 = nn.BatchNorm2d(32)
+        if start_layer < 6 <= end_layer:
+            self.layer6 = nn.ReLU()
+        if start_layer < 7 <= end_layer:
+            self.layer7 = nn.Conv2d(32, 64, 1)
+        if start_layer < 8 <= end_layer:
+            self.layer8 = nn.BatchNorm2d(64)
+        if start_layer < 9 <= end_layer:
+            self.layer9 = nn.ReLU()
+        if start_layer < 10 <= end_layer:
+            self.layer10 = nn.Conv2d(64, 64, 3, 2, 1)
+        if start_layer < 11 <= end_layer:
+            self.layer11 = nn.BatchNorm2d(64)
+        if start_layer < 12 <= end_layer:
+            self.layer12 = nn.ReLU()
+        if start_layer < 13 <= end_layer:
+            self.layer13 = nn.Conv2d(64, 128, 1)
+        if start_layer < 14 <= end_layer:
+            self.layer14 = nn.BatchNorm2d(128)
+        if start_layer < 15 <= end_layer:
+            self.layer15 = nn.ReLU()
+        if start_layer < 16 <= end_layer:
+            self.layer16 = nn.Conv2d(128, 128, 3, 1, 1)
+        if start_layer < 17 <= end_layer:
+            self.layer17 = nn.BatchNorm2d(128)
+        if start_layer < 18 <= end_layer:
+            self.layer18 = nn.ReLU()
+        if start_layer < 19 <= end_layer:
+            self.layer19 = nn.Conv2d(128, 128, 1)
+        if start_layer < 20 <= end_layer:
+            self.layer20 = nn.BatchNorm2d(128)
+        if start_layer < 21 <= end_layer:
+            self.layer21 = nn.ReLU()
+        if start_layer < 22 <= end_layer:
+            self.layer22 = nn.Conv2d(128, 128, 3, 2, 1)
+        if start_layer < 23 <= end_layer:
+            self.layer23 = nn.BatchNorm2d(128)
+        if start_layer < 24 <= end_layer:
+            self.layer24 = nn.ReLU()
+        if start_layer < 25 <= end_layer:
+            self.layer25 = nn.Conv2d(128, 256, 1)
+        if start_layer < 26 <= end_layer:
+            self.layer26 = nn.BatchNorm2d(256)
+        if start_layer < 27 <= end_layer:
+            self.layer27 = nn.ReLU()
+        if start_layer < 28 <= end_layer:
+            self.layer28 = nn.Conv2d(256, 256, 3, 1, 1)
+        if start_layer < 29 <= end_layer:
+            self.layer29 = nn.BatchNorm2d(256)
+        if start_layer < 30 <= end_layer:
+            self.layer30 = nn.ReLU()
+        if start_layer < 31 <= end_layer:
+            self.layer31 = nn.Conv2d(256, 256, 1)
+        if start_layer < 32 <= end_layer:
+            self.layer32 = nn.BatchNorm2d(256)
+        if start_layer < 33 <= end_layer:
+            self.layer33 = nn.ReLU()
+        if start_layer < 34 <= end_layer:
+            self.layer34 = nn.Conv2d(256, 256, 3, 2, 1)
+        if start_layer < 35 <= end_layer:
+            self.layer35 = nn.BatchNorm2d(256)
+        if start_layer < 36 <= end_layer:
+            self.layer36 = nn.ReLU()
+        if start_layer < 37 <= end_layer:
+            self.layer37 = nn.Conv2d(256, 512, 1)
+        if start_layer < 38 <= end_layer:
+            self.layer38 = nn.BatchNorm2d(512)
+        if start_layer < 39 <= end_layer:
+            self.layer39 = nn.ReLU()
+        if start_layer < 40 <= end_layer:
+            self.layer40 = nn.Conv2d(512, 512, 3, 1, 1)
+        if start_layer < 41 <= end_layer:
+            self.layer41 = nn.BatchNorm2d(512)
+        if start_layer < 42 <= end_layer:
+            self.layer42 = nn.ReLU()
+        if start_layer < 43 <= end_layer:
+            self.layer43 = nn.Conv2d(512, 512, 1)
+        if start_layer < 44 <= end_layer:
+            self.layer44 = nn.BatchNorm2d(512)
+        if start_layer < 45 <= end_layer:
+            self.layer45 = nn.ReLU()
+        if start_layer < 46 <= end_layer:
+            self.layer46 = nn.Conv2d(512, 512, 3, 1, 1)
+        if start_layer < 47 <= end_layer:
+            self.layer47 = nn.BatchNorm2d(512)
+        if start_layer < 48 <= end_layer:
+            self.layer48 = nn.ReLU()
+        if start_layer < 49 <= end_layer:
+            self.layer49 = nn.Conv2d(512, 512, 1)
+        if start_layer < 50 <= end_layer:
+            self.layer50 = nn.BatchNorm2d(512)
+        if start_layer < 51 <= end_layer:
+            self.layer51 = nn.ReLU()
+        if start_layer < 52 <= end_layer:
+            self.layer52 = nn.Conv2d(512, 512, 3, 1, 1)
+        if start_layer < 53 <= end_layer:
+            self.layer53 = nn.BatchNorm2d(512)
+        if start_layer < 54 <= end_layer:
+            self.layer54 = nn.ReLU()
+        if start_layer < 55 <= end_layer:
+            self.layer55 = nn.Conv2d(512, 512, 1)
+        if start_layer < 56 <= end_layer:
+            self.layer56 = nn.BatchNorm2d(512)
+        if start_layer < 57 <= end_layer:
+            self.layer57 = nn.ReLU()
+        if start_layer < 58 <= end_layer:
+            self.layer58 = nn.Conv2d(512, 512, 3, 1, 1)
+        if start_layer < 59 <= end_layer:
+            self.layer59 = nn.BatchNorm2d(512)
+        if start_layer < 60 <= end_layer:
+            self.layer60 = nn.ReLU()
+        if start_layer < 61 <= end_layer:
+            self.layer61 = nn.Conv2d(512, 512, 1)
+        if start_layer < 62 <= end_layer:
+            self.layer62 = nn.BatchNorm2d(512)
+        if start_layer < 63 <= end_layer:
+            self.layer63 = nn.ReLU()
+        if start_layer < 64 <= end_layer:
+            self.layer64 = nn.Conv2d(512, 512, 3, 1, 1)
+        if start_layer < 65 <= end_layer:
+            self.layer65 = nn.BatchNorm2d(512)
+        if start_layer < 66 <= end_layer:
+            self.layer66 = nn.ReLU()
+        if start_layer < 67 <= end_layer:
+            self.layer67 = nn.Conv2d(512, 512, 1)
+        if start_layer < 68 <= end_layer:
+            self.layer68 = nn.BatchNorm2d(512)
+        if start_layer < 69 <= end_layer:
+            self.layer69 = nn.ReLU()
+        if start_layer < 70 <= end_layer:
+            self.layer70 = nn.Conv2d(512, 512, 3, 2, 1)
+        if start_layer < 71 <= end_layer:
+            self.layer71 = nn.BatchNorm2d(512)
+        if start_layer < 72 <= end_layer:
+            self.layer72 = nn.ReLU()
+        if start_layer < 73 <= end_layer:
+            self.layer73 = nn.Conv2d(512, 1024, 1)
+        if start_layer < 74 <= end_layer:
+            self.layer74 = nn.BatchNorm2d(1024)
+        if start_layer < 75 <= end_layer:
+            self.layer75 = nn.ReLU()
+        if start_layer < 76 <= end_layer:
+            self.layer76 = nn.Conv2d(1024, 1024, 3, 1, 1)
+        if start_layer < 77 <= end_layer:
+            self.layer77 = nn.BatchNorm2d(1024)
+        if start_layer < 78 <= end_layer:
+            self.layer78 = nn.ReLU()
+        if start_layer < 79 <= end_layer:
+            self.layer79 = nn.Conv2d(1024, 1024, 1)
+        if start_layer < 80 <= end_layer:
+            self.layer80 = nn.BatchNorm2d(1024)
+        if start_layer < 81 <= end_layer:
+            self.layer81 = nn.ReLU()
+        if start_layer < 82 <= end_layer:
+            self.layer82 = nn.MaxPool2d(2, 2)
+        if start_layer < 83 <= end_layer:
+            self.layer83 = nn.Flatten(1, -1)
+        if start_layer < 84 <= end_layer:
+            self.layer84 = nn.Linear(1024, 10)
 
     def forward(self, x):
-        out1 = self.layer1(x)
-        out2 = self.layer2(out1)
-        out3 = self.layer3(out2)
-        out4 = self.layer4(out3)
-        out5 = self.layer5(out4)
-        out6 = self.layer6(out5)
-        out7 = self.layer7(out6)
-        out8 = self.layer8(out7)
-        out9 = self.layer9(out8)
-        out10 = self.layer10(out9)
-        out11 = self.layer11(out10)
-        out12 = self.layer12(out11)
-        out13 = self.layer13(out12)
-        out14 = self.layer14(out13)
-        out15 = self.layer15(out14)
-        out16 = self.layer16(out15)
-        out17 = self.layer17(out16)
-        out18 = self.layer18(out17)
-        out19 = self.layer19(out18)
-        out20 = self.layer20(out19)
-        out21 = self.layer21(out20)
-        out22 = self.layer22(out21)
-        out23 = self.layer23(out22)
-        out24 = self.layer24(out23)
-        out25 = self.layer25(out24)
-        out26 = self.layer26(out25)
-        out27 = self.layer27(out26)
-        out28 = self.layer28(out27)
-        out29 = self.layer29(out28)
-        out30 = self.layer30(out29)
-        out31 = self.layer31(out30)
-        out32 = self.layer32(out31)
-        out33 = self.layer33(out32)
-        out34 = self.layer34(out33)
-        out35 = self.layer35(out34)
-        out36 = self.layer36(out35)
-        out37 = self.layer37(out36)
-        out38 = self.layer38(out37)
-        out39 = self.layer39(out38)
-        out40 = self.layer40(out39)
-        out41 = self.layer41(out40)
-        out42 = self.layer42(out41)
-        out43 = self.layer43(out42)
-        out44 = self.layer44(out43)
-        out45 = self.layer45(out44)
-        out46 = self.layer46(out45)
-        out47 = self.layer47(out46)
-        out48 = self.layer48(out47)
-        out49 = self.layer49(out48)
-        out50 = self.layer50(out49)
-        out51 = self.layer51(out50)
-        out52 = self.layer52(out51)
-        out53 = self.layer53(out52)
-        out54 = self.layer54(out53)
-        out55 = self.layer55(out54)
-        out56 = self.layer56(out55)
-        out57 = self.layer57(out56)
-        out58 = self.layer58(out57)
-        out59 = self.layer59(out58)
-        out60 = self.layer60(out59)
-        out61 = self.layer61(out60)
-        out62 = self.layer62(out61)
-        out63 = self.layer63(out62)
-        out64 = self.layer64(out63)
-        out65 = self.layer65(out64)
-        out66 = self.layer66(out65)
-        out67 = self.layer67(out66)
-        out68 = self.layer68(out67)
-        out69 = self.layer69(out68)
-        out70 = self.layer70(out69)
-        out71 = self.layer71(out70)
-        out72 = self.layer72(out71)
-        out73 = self.layer73(out72)
-        out74 = self.layer74(out73)
-        out75 = self.layer75(out74)
-        out76 = self.layer76(out75)
-        out77 = self.layer77(out76)
-        out78 = self.layer78(out77)
-        out79 = self.layer79(out78)
-        out80 = self.layer80(out79)
-        out81 = self.layer81(out80)
-        out82 = self.layer82(out81)
-        out83 = self.layer83(out82)
-        out84 = self.layer84(out83)
-        return out84
+        for i in range(1, 85):
+            if self.start_layer < i <= self.end_layer:
+                layer = getattr(self, f'layer{i}', None)
+                if layer is not None:
+                    x = layer(x)
+        return x

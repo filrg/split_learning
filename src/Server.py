@@ -357,9 +357,6 @@ class Server:
                 klass = globals()[f'{self.model_name}_MNIST']
             else:
                 klass = globals()[f'{self.model_name}_{self.data_name}']
-            full_model = klass()
-            if self.model_name != 'ViT':
-                full_model = nn.Sequential(*nn.ModuleList(full_model.children()))
 
             for (client_id, layer_id, _, clustering, _, _, label, train) in self.list_clients:
                 # Read parameters file
@@ -378,37 +375,21 @@ class Server:
                     if self.load_parameters and register:
                         if os.path.exists(filepath):
                             full_state_dict = torch.load(filepath, weights_only=True)
-                            if self.model_name != 'ViT':
-                                full_model.load_state_dict(full_state_dict)
 
-                                if layer_id == 1:
-                                    if layers == [0, 0]:
-                                        model_part = nn.Sequential(*nn.ModuleList(full_model.children())[:])
-                                    else:
-                                        model_part = nn.Sequential(*nn.ModuleList(full_model.children())[:layers[1]])
-                                elif layer_id == len(self.total_clients):
-                                    model_part = nn.Sequential(*nn.ModuleList(full_model.children())[layers[0]:])
+                            if layer_id == 1:
+                                if layers == [0, 0]:
+                                    model = klass()
                                 else:
-                                    model_part = nn.Sequential(
-                                        *nn.ModuleList(full_model.children())[layers[0]:layers[1]])
-
-                                state_dict = model_part.state_dict()
-                                self.logger.log_info("Model loaded successfully.")
+                                    model = klass(end_layer=layers[1])
+                            elif layer_id == len(self.total_clients):
+                                model = klass(start_layer=layers[0])
                             else:
-                                if layer_id == 1:
-                                    if layers == [0, 0]:
-                                        model = klass()
-                                    else:
-                                        model = klass(end_layer=layers[1])
-                                elif layer_id == len(self.total_clients):
-                                    model = klass(start_layer=layers[0])
-                                else:
-                                    model = klass(start_layer=layers[0], end_layer=layers[1])
-                                state_dict = model.state_dict()
-                                keys = state_dict.keys()
+                                model = klass(start_layer=layers[0], end_layer=layers[1])
+                            state_dict = model.state_dict()
+                            keys = state_dict.keys()
 
-                                for key in keys:
-                                    state_dict[key] = full_state_dict[key]
+                            for key in keys:
+                                state_dict[key] = full_state_dict[key]
 
                         else:
                             self.logger.log_info(f"File {filepath} does not exist.")
@@ -563,16 +544,6 @@ class Server:
                     self.list_cut_layers.append(cut_point)
 
             else:
-                # self.label_counts = np.array([[480,480,480,480,480,20,20,20,20,20],
-                #                                [480,480,480,480,480,20,20,20,20,20],
-                #                                [480,480,480,480,480,20,20,20,20,20],
-                #                                [480,480,480,480,480,20,20,20,20,20],
-                #                                [20,20,20,20,20,480,480,480,480,480],
-                #                                [20,20,20,20,20,480,480,480,480,480],
-                #                                [20,20,20,20,20,480,480,480,480,480],
-                #                                [20,20,20,20,20,480,480,480,480,480]])
-                self.label_counts = np.array([[400,400,400,400,400,100,100,100,100,100],
-                                               [100,100,100,100,100,400,400,400,400,400]])
                 self.label_counts = self.label_counts.tolist()
                 self.num_cluster = self.manual_cluster['num-cluster']
                 self.list_cut_layers = self.manual_cluster['cut-layers']
@@ -661,8 +632,6 @@ class Server:
             if self.list_cut_layers[c][0] != 0:
                 for idx, layer_dict in enumerate(avg_layers):
                     sd = layer_dict
-                    if self.model_name != 'ViT' and idx > 0:
-                        sd = src.Utils.change_state_dict(layer_dict, self.list_cut_layers[c][idx - 1])
                     full_dict.update(copy.deepcopy(sd))
             else:
                 full_dict.update(copy.deepcopy(avg_layers[0]))

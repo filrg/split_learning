@@ -1,5 +1,4 @@
-import torch
-import torch.nn as nn
+
 import numpy as np
 import math
 from tqdm import tqdm
@@ -42,8 +41,7 @@ def test(model_name, data_name, state_dict_full, logger):
         raise ValueError(f"Class '{model_name}' does not exist.")
 
     model = klass()
-    if model_name != 'ViT':
-         model = nn.Sequential(*nn.ModuleList(model.children()))
+
     model.load_state_dict(state_dict_full)
     # evaluation mode
     model.eval()
