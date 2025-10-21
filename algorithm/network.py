@@ -21,7 +21,7 @@ def network(channel, rounds = 100, id_client = None):
                                   routing_key=queue_name,
                                   body=pickle.dumps(message),
                                   properties=pika.BasicProperties(
-                                      expiration='10',  # TTL = 5000 milliseconds
+                                      expiration='10',  # TTL = 10 milliseconds
                                       delivery_mode=1  # non-persistent (optional)
                                     )
                                   )

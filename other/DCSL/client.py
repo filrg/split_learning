@@ -1,18 +1,13 @@
-import json
-
 import pika
 import uuid
 import argparse
 import yaml
-import os
 
 import torch
 
 import src.Log
 from src.RpcClient import RpcClient
 from src.Scheduler import Scheduler
-from algorithm.profiling import profiling
-from algorithm.network import network
 
 parser = argparse.ArgumentParser(description="Split learning framework")
 parser.add_argument('--layer_id', type=int, required=True, help='ID of layer, start from 1')
@@ -30,10 +25,6 @@ username = config["rabbit"]["username"]
 password = config["rabbit"]["password"]
 virtual_host = config["rabbit"]["virtual-host"]
 
-round_train_test = config["profiling"]["round-train-test"]
-round_comm_test = config["profiling"]["round-comm-test"]
-batch_size = config["profiling"]["batch-size"]
-
 device = None
 if args.device is None:
     if torch.cuda.is_available():
@@ -50,20 +41,6 @@ credentials = pika.PlainCredentials(username, password)
 connection = pika.BlockingConnection(pika.ConnectionParameters(address, 5672, f'{virtual_host}', credentials))
 channel = connection.channel()
 
-if os.path.exists("profiling.json"):
-    src.Log.print_with_color(f"Exists profiling.json.", 'green')
-
-else:
-    src.Log.print_with_color(f'Waiting to profiling this device ...', 'yellow')
-
-    data = profiling(round_train_test, batch_size, device)
-    net =network(channel, round_comm_test, client_id)
-    data['network'] =  net
-    with open('profiling.json','w',encoding='utf-8') as file:
-        json.dump(data, file, ensure_ascii=False, indent=4)
-
-    src.Log.print_with_color(f'End profiling.', 'yellow')
-
 if args.cluster is None:
     cluster = -1
 else:
@@ -72,15 +49,7 @@ else:
 if __name__ == "__main__":
     src.Log.print_with_color("[>>>] Client sending registration message to server...", "red")
 
-    with open("profiling.json","r", encoding='utf-8') as file:
-        loaded_data = json.load(file)
-
-    performance = loaded_data["training speed"]
-    exe_time = loaded_data["execute training time"]
-    net = loaded_data["network"]
-    size_data = loaded_data["list of data size"]
-
-    data = {"action": "REGISTER", "client_id": client_id, "layer_id": args.layer_id, "performance": performance ,"cluster": cluster, "exe_time": exe_time, "net": net, "size_data": size_data, "message": "Hello from Client!"}
+    data = {"action": "REGISTER", "client_id": client_id, "layer_id": args.layer_id, "cluster": cluster, "message": "Hello from Client!"}
     scheduler = Scheduler(client_id, args.layer_id, channel, device)
     client = RpcClient(client_id, args.layer_id, channel, scheduler.train_on_device, device)
     client.send_to_server(data)

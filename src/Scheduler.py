@@ -118,12 +118,14 @@ class Scheduler:
                         if len(data_store) > control_count:
                             continue
                         # Process forward message
-                        if (time.time() - start) > limited_time:
+                        if ((time.time() - start) > limited_time) and mode_limited_time is True:
                             if i > 0:
                                 end_data = True
                                 end_training = True
                             else:
-                                end_training = True
+                                if num_forward == num_backward:
+                                    end_training = True
+                                    break
                         else:
                             try:
                                 training_data, labels = next(data_iter)

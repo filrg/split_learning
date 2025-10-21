@@ -16,8 +16,7 @@ server:
     num-cluster: 1
     cut-layers:
       - [7]
-    infor-cluster:
-      - [1,1]
+
   model: VGG16
   data-name: CIFAR10
   parameters:
@@ -32,16 +31,6 @@ server:
       alpha: 1
     refresh-each-round: True
   random-seed: 1
-  client-cluster:
-    enable: False
-    auto-cluster: False
-    special: False
-    cluster: AffinityPropagation
-    AffinityPropagation:
-      damping: 0.9
-      max_iter: 1000
-    KMeans:
-      num-cluster: 1
 
 rabbit:
   address: 127.0.0.1
@@ -58,15 +47,3 @@ learning:
   batch-size: 32
   control-count: 3
   clip-grad-norm: 0.0
-  compute-loss:
-    mode: normal # normal /FedProx /ReBaFL
-    FedProx:
-      mu: 0.01
-    ReBaFL:
-      mu: 0.01
-      lambda_aug: 0.1
-
-profiling:
-  round-train-test: 1
-  round-comm-test: 1
-  batch-size: 32
