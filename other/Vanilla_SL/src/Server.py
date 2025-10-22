@@ -87,6 +87,7 @@ class Server:
             label_distribution = np.random.dirichlet([self.data_distribution["dirichlet"]["alpha"]] * self.num_label,
                                                      self.total_clients[0])
 
+            # Change here
             self.label_counts = (label_distribution * self.num_sample).astype(int)
         else:
             self.label_counts = np.full((self.total_clients[0], self.num_label), self.num_sample // self.num_label)
