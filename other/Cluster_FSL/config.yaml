@@ -5,7 +5,6 @@ server:
     epoch: 10
     time: 10 #(seconds)
 
-  local-round: 1
   global-round: 1
   clients:
     - 1

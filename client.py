@@ -81,8 +81,7 @@ if __name__ == "__main__":
     size_data = loaded_data["list of data size"]
 
     data = {"action": "REGISTER", "client_id": client_id, "layer_id": args.layer_id, "performance": performance ,"cluster": cluster, "exe_time": exe_time, "net": net, "size_data": size_data, "message": "Hello from Client!"}
-    scheduler = Scheduler(client_id, args.layer_id, channel, device)
-    client = RpcClient(client_id, args.layer_id, channel, scheduler.train_on_device, device)
+    client = RpcClient(client_id, args.layer_id, channel, device)
     client.send_to_server(data)
     client.wait_response()
 

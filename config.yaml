@@ -2,10 +2,9 @@ name: Split Learning
 server:
   limited-time:
     enable: False
-    epoch: 10
+    epoch: 1
     time: 10 #(seconds)
 
-  local-round: 1
   global-round: 1
   clients:
     - 1
@@ -21,9 +20,9 @@ server:
   model: VGG16
   data-name: CIFAR10
   parameters:
-    load: False
-    save: False
-  validation: False
+    load: True
+    save: True
+  validation: True
   data-distribution:
     non-iid: False
     num-sample: 5000
@@ -35,7 +34,6 @@ server:
   client-cluster:
     enable: False
     auto-cluster: False
-    special: False
     cluster: AffinityPropagation
     AffinityPropagation:
       damping: 0.9
@@ -58,15 +56,8 @@ learning:
   batch-size: 32
   control-count: 3
   clip-grad-norm: 0.0
-  compute-loss:
-    mode: normal # normal /FedProx /ReBaFL
-    FedProx:
-      mu: 0.01
-    ReBaFL:
-      mu: 0.01
-      lambda_aug: 0.1
 
 profiling:
-  round-train-test: 1
-  round-comm-test: 1
+  round-train-test: 20
+  round-comm-test: 100
   batch-size: 32

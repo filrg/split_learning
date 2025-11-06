@@ -15,7 +15,7 @@ from src.Selection import auto_threshold
 from src.Selection import lpt
 from algorithm.partition import partition
 from src.model import *
-
+from src.val.get_val import get_val
 
 class Server:
     def __init__(self, config):
@@ -30,7 +30,6 @@ class Server:
         self.data_name = config["server"]["data-name"]
         self.total_clients = config["server"]["clients"]
         self.list_cut_layers = [config["server"]["no-cluster"]["cut-layers"]]
-        self.local_round = config["server"]["local-round"]
         self.global_round = config["server"]["global-round"]
         self.round = self.global_round
         self.save_parameters = config["server"]["parameters"]["save"]
@@ -46,13 +45,11 @@ class Server:
         self.momentum = config["learning"]["momentum"]
         self.control_count = config["learning"]["control-count"]
         self.clip_grad_norm = config["learning"]["clip-grad-norm"]
-        self.compute_loss = config["learning"]["compute-loss"]
         self.data_distribution = config["server"]["data-distribution"]
 
         # Cluster
         self.client_cluster_config = config["server"]["client-cluster"]
         self.mode_cluster = self.client_cluster_config["enable"]
-        self.special = self.client_cluster_config["special"]
         self.auto_cluster = self.client_cluster_config["auto-cluster"]
         if not self.mode_cluster:
             self.local_round = 1
@@ -81,22 +78,15 @@ class Server:
         self.first_layer_clients_in_each_cluster = []
         self.responses = {}  # Save response
         self.list_clients = []
-        self.global_avg_state_dict = [[] for _ in range(len(self.total_clients))]
         self.round_result = True
 
-        self.global_model_parameters = [[] for _ in range(len(self.total_clients))]
-        self.global_client_sizes = [[] for _ in range(len(self.total_clients))]
-        self.local_model_parameters = None
-        self.local_client_sizes = None
-        self.local_avg_state_dict = None
-        self.total_cluster_size = None
+        self.global_model_parameters = None
+        self.global_client_sizes = None
+        self.avg_state_dict = None
 
         self.size_data = None
         self.num_cluster = None
-        self.current_local_training_round = None
         self.infor_cluster = None
-        self.current_infor_cluster = None
-        self.local_update_count = 0
         self.reject = False
 
         self.channel.basic_qos(prefetch_count=1)
@@ -112,47 +102,6 @@ class Server:
         if self.non_iid:
             label_distribution = np.random.dirichlet([self.data_distribution["dirichlet"]["alpha"]] * self.num_label,
                                                      self.total_clients[0])
-            # label_distribution = np.array([
-            #     [1.88670492e-04, 2.78323802e-01, 1.13726152e-02, 1.24349201e-01,
-            #      5.38795539e-04, 1.90184440e-01, 6.43625090e-02, 2.54724837e-01,
-            #      7.59550521e-02, 7.76595921e-08],
-            #
-            #     [7.86644625e-06, 1.43142597e-09, 9.23733736e-02, 1.41117583e-03,
-            #      5.57904425e-01, 4.59899388e-03, 2.67154361e-02, 6.79897381e-02,
-            #      1.90655112e-04, 2.48808334e-01],
-            #
-            #     [1.28974551e-03, 7.09386721e-02, 1.48008106e-01, 1.34067660e-01,
-            #      6.63072091e-02, 2.32514706e-04, 9.58605190e-04, 3.68931950e-03,
-            #      4.65252553e-02, 5.27982912e-01],
-            #
-            #     [1.47841723e-02, 8.78359666e-03, 4.55327204e-01, 1.57679071e-06,
-            #      2.85479330e-01, 9.25068105e-04, 2.12506510e-01, 1.36979009e-03,
-            #      1.40011779e-02, 6.82157427e-03],
-            #
-            #     [1.90630425e-06, 2.25567241e-02, 8.21096538e-01, 3.25336373e-05,
-            #      1.31714757e-03, 5.89168566e-02, 1.69602744e-06, 6.43260198e-06,
-            #      8.83353304e-09, 9.60701568e-02],
-            #
-            #     [3.53581329e-01, 8.26254786e-02, 1.01462752e-03, 3.96087356e-01,
-            #      1.60483180e-04, 4.51104455e-03, 4.13400181e-02, 9.78326450e-07,
-            #      7.11202637e-06, 1.20671573e-01],
-            #
-            #     [9.49379988e-05, 4.65601685e-02, 6.32840557e-03, 4.47674790e-03,
-            #      8.49202122e-02, 8.56501663e-09, 2.58490916e-01, 3.96866660e-01,
-            #      2.01766516e-01, 4.95426887e-04],
-            #
-            #     [2.08492514e-02, 4.09489645e-02, 9.72125652e-02, 1.90336896e-02,
-            #      3.90847431e-04, 1.29940518e-01, 4.96233948e-04, 6.49792721e-01,
-            #      3.98916100e-02, 1.44359867e-03],
-            #
-            #     [7.07523146e-02, 4.22245806e-08, 4.25533228e-02, 3.42306651e-04,
-            #      7.68246482e-01, 7.34896463e-02, 4.41445349e-02, 4.66822655e-04,
-            #      6.75889808e-12, 4.52780196e-06],
-            #
-            #     [9.30039177e-05, 9.77639318e-06, 2.95348498e-02, 2.12082532e-02,
-            #      1.18523841e-14, 8.28632986e-04, 8.09996300e-01, 1.24028178e-03,
-            #      1.36135136e-01, 9.53766212e-04]
-            # ])
 
             self.label_counts = (label_distribution * self.num_sample).astype(int)
         else:
@@ -196,7 +145,7 @@ class Server:
 
         elif action == "NOTIFY":
             cluster = message["cluster"]
-            src.Log.print_with_color(f"[<<<] Received message from client: {message}", "blue")
+            src.Log.print_with_color("[<<<] Received message from client: {message}", "blue")
             message = {"action": "PAUSE",
                        "message": "Pause training and please send your parameters",
                        "parameters": None}
@@ -210,18 +159,6 @@ class Server:
                 for (client_id, layer_id, _, clustering, _, _ ,_, train) in self.list_clients:
                     if train is True:
                         if clustering == cluster:
-                            if self.special is False:
-                                self.send_to_response(client_id, pickle.dumps(message))
-                            else:
-                                if layer_id == 1:
-                                    self.send_to_response(client_id, pickle.dumps(message))
-                self.local_update_count += 1
-
-            if self.special and self.local_update_count == self.num_cluster * self.local_round:
-                self.local_update_count = 0
-                for (client_id, layer_id, _, clustering, _, _ ,_, train) in self.list_clients:
-                    if train is True:
-                        if layer_id != 1:
                             self.send_to_response(client_id, pickle.dumps(message))
 
         elif action == "UPDATE":
@@ -231,93 +168,58 @@ class Server:
             src.Log.print_with_color(f"[<<<] Received message from {client_id}: {data_message}", "blue")
             cluster = message["cluster"]
             # Global update
-            if self.current_local_training_round[cluster] == self.local_round - 1:
-                self.current_clients[layer_id - 1] += 1
-                if not result:
-                    self.round_result = False
 
-                # Save client's model parameters
+            self.current_clients[layer_id - 1] += 1
+            if not result:
+                self.round_result = False
+
+            # Save client's model parameters
+            if self.save_parameters and self.round_result:
+                model_state_dict = message["parameters"]
+                client_size = message["size"]
+                self.global_model_parameters[cluster][layer_id - 1].append(model_state_dict)
+                self.global_client_sizes[cluster][layer_id - 1].append(client_size)
+
+            # If consumed all client's parameters
+            if self.current_clients == self.total_clients:
+                src.Log.print_with_color("Collected all parameters.", "yellow")
                 if self.save_parameters and self.round_result:
-                    model_state_dict = message["parameters"]
-                    client_size = message["size"]
-                    self.local_model_parameters[cluster][layer_id - 1].append(model_state_dict)
-                    self.local_client_sizes[cluster][layer_id - 1].append(client_size)
-
-                # If consumed all client's parameters
-                if self.current_clients == self.total_clients:
-                    src.Log.print_with_color("Collected all parameters.", "yellow")
-                    if self.save_parameters and self.round_result:
-                        for i in range(0, self.num_cluster):
-                            self.total_cluster_size[i] = sum(self.local_client_sizes[i][0])
-                            self.avg_all_parameters(i)
-                            self.local_model_parameters[i] = [[] for _ in range(len(self.total_clients))]
-                            self.local_client_sizes[i] = [[] for _ in range(len(self.total_clients))]
-                    self.current_clients = [0 for _ in range(len(self.total_clients))]
-                    self.current_local_training_round = [0 for _ in range(self.num_cluster)]
-                    # Test
-                    if self.save_parameters and self.validation and self.round_result:
-                        state_dict_full = self.concatenate_and_avg_clusters()
-                        self.local_avg_state_dict = [[] for _ in range(self.num_cluster)]
-                        if not src.Validation.test(self.model_name, self.data_name, state_dict_full, self.logger):
-                            self.logger.log_warning("Training failed!")
-                        else:
-                            # Save to files
-                            torch.save(state_dict_full, f'{self.model_name}_{self.data_name}.pth')
-                            self.round -= 1
+                    for i in range(0, self.num_cluster):
+                        self.avg_all_parameters(i)
+                        self.global_model_parameters[i] = [[] for _ in range(len(self.total_clients))]
+                        self.global_client_sizes[i] = [[] for _ in range(len(self.total_clients))]
+                self.current_clients = [0 for _ in range(len(self.total_clients))]
+                # Test
+                if self.save_parameters and self.validation and self.round_result:
+                    state_dict_full = self.concatenate_and_avg_clusters()
+                    self.avg_state_dict = [[] for _ in range(self.num_cluster)]
+                    if not get_val(self.model_name, self.data_name, state_dict_full,self.logger):
+                        self.logger.log_warning("Training failed!")
                     else:
+                        # Save to files
+                        torch.save(state_dict_full, f'{self.model_name}_{self.data_name}.pth')
                         self.round -= 1
-
-                    # Start a new training round
-                    self.round_result = True
-
-                    if self.round > 0:
-                        self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
-                        if self.save_parameters:
-                            self.notify_clients(special=self.special)
-                        else:
-                            self.notify_clients(register=False, special=self.special)
-                    else:
-                        self.logger.log_info("Stop training !!!")
-                        self.notify_clients(start=False)
-                        sys.exit()
-
-            # Local update
-            else:
-                if not result:
-                    self.round_result = False
-                if self.round_result:
-                    model_state_dict = message["parameters"]
-                    client_size = message["size"]
-                    self.local_model_parameters[cluster][layer_id - 1].append(model_state_dict)
-                    self.local_client_sizes[cluster][layer_id - 1].append(client_size)
-                self.current_infor_cluster[cluster][layer_id - 1] += 1
-
-                if self.special is False:
-                    if self.current_infor_cluster[cluster] == self.infor_cluster[cluster]:
-                        self.avg_all_parameters(cluster=cluster)
-                        self.notify_clients(cluster=cluster, special=False)
-                        self.local_avg_state_dict[cluster] = []
-                        self.current_local_training_round[cluster] += 1
-
-                        self.local_model_parameters[cluster] = [[] for _ in range(len(self.total_clients))]
-                        self.local_client_sizes[cluster] = [[] for _ in range(len(self.total_clients))]
-                        self.current_infor_cluster[cluster] = [0 for _ in range(len(self.total_clients))]
                 else:
-                    if self.current_infor_cluster[cluster][0] == self.infor_cluster[cluster][0]:
-                        self.avg_all_parameters(cluster=cluster)
-                        self.notify_clients(cluster=cluster, special=True)
-                        self.local_avg_state_dict[cluster] = []
-                        self.current_local_training_round[cluster] += 1
+                    self.round -= 1
 
-                        self.local_model_parameters[cluster] = [[] for _ in range(len(self.total_clients))]
-                        self.local_client_sizes[cluster] = [[] for _ in range(len(self.total_clients))]
-                        self.current_infor_cluster[cluster] = [0 for _ in range(len(self.total_clients))]
+                # Start a new training round
+                self.round_result = True
+
+                if self.round > 0:
+                    self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
+                    if self.save_parameters:
+                        self.notify_clients()
+                    else:
+                        self.notify_clients(register=False)
+                else:
+                    self.logger.log_info("Stop training !!!")
+                    self.notify_clients(start=False)
+                    sys.exit()
 
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
-    def notify_clients(self, start=True, register=True, cluster=None, special=False):
-
-        if cluster is not None and special is False:
+    def notify_clients(self, start=True, register=True, cluster=None):
+        if cluster is not None:
             for (client_id, layer_id, _, clustering, _, _ ,_, train) in self.list_clients:
                 if train is True:
                     if clustering == cluster:
@@ -332,7 +234,7 @@ class Server:
 
                         response = {"action": "START",
                                     "message": "Server accept the connection!",
-                                    "parameters": copy.deepcopy(self.local_avg_state_dict[cluster][layer_id - 1]),
+                                    "parameters": copy.deepcopy(self.avg_state_dict[cluster][layer_id - 1]),
                                     "num_layers": len(self.total_clients),
                                     "layers": layers,
                                     "model_name": self.model_name,
@@ -341,22 +243,15 @@ class Server:
                                     "batch_size": self.batch_size,
                                     "lr": self.lr,
                                     "momentum": self.momentum,
-                                    "compute_loss": self.compute_loss,
                                     "clip_grad_norm": self.clip_grad_norm,
                                     "label_count": None,
                                     "cluster": None,
-                                    "special": False,
                                     "config_time": self.config_time}
 
                         self.send_to_response(client_id, pickle.dumps(response))
-
-        if cluster is None:
-
+        else:
             # Send message to clients when consumed all clients
-            if 'MNIST' in self.data_name:
-                klass = globals()[f'{self.model_name}_MNIST']
-            else:
-                klass = globals()[f'{self.model_name}_{self.data_name}']
+            klass = globals()[f'{self.model_name}_{self.data_name}']
 
             for (client_id, layer_id, _, clustering, _, _, label, train) in self.list_clients:
                 # Read parameters file
@@ -408,10 +303,8 @@ class Server:
                                     "lr": self.lr,
                                     "momentum": self.momentum,
                                     "clip_grad_norm": self.clip_grad_norm,
-                                    "compute_loss": self.compute_loss,
                                     "label_count": label,
                                     "cluster": clustering,
-                                    "special": self.special,
                                     "config_time": self.config_time}
                         self.send_to_response(client_id, pickle.dumps(response))
 
@@ -431,38 +324,6 @@ class Server:
                     self.send_to_response(client_id, pickle.dumps(response))
 
             self.reject = True
-
-        if cluster is not None and special is True:
-            for (client_id, layer_id, _, clustering) in self.list_clients:
-                if clustering == cluster:
-                    if layer_id == 1:
-                        layers = [0, self.list_cut_layers[cluster][0]]
-                    elif layer_id == len(self.total_clients):
-                        layers = [self.list_cut_layers[cluster][-1], -1]
-                    else:
-                        layers = [self.list_cut_layers[cluster][layer_id - 2],
-                                  self.list_cut_layers[cluster][layer_id - 1]]
-
-                    src.Log.print_with_color(f"[>>>] Sent start training request to client {client_id}", "red")
-                    if layer_id == 1:
-                        response = {"action": "START",
-                                    "message": "Server accept the connection!",
-                                    "parameters": copy.deepcopy(self.local_avg_state_dict[cluster][layer_id - 1]),
-                                    "num_layers": len(self.total_clients),
-                                    "layers": layers,
-                                    "model_name": self.model_name,
-                                    "data_name": self.data_name,
-                                    "control_count": self.control_count,
-                                    "batch_size": self.batch_size,
-                                    "lr": self.lr,
-                                    "momentum": self.momentum,
-                                    "compute_loss": self.compute_loss,
-                                    "clip_grad_norm": self.clip_grad_norm,
-                                    "label_count": None,
-                                    "cluster": None,
-                                    "special": True,
-                                    "config_time": None}
-                        self.send_to_response(client_id, pickle.dumps(response))
 
     def cluster_and_selection(self):
         # Clustering only device in first layer
@@ -582,16 +443,13 @@ class Server:
             cut_point = partition(exe_time_layer_1, net_layer_1, exe_time_layer_2, net_layer_2, self.size_data)
             self.list_cut_layers.append(cut_point)
 
-        self.local_model_parameters = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
-        self.local_client_sizes = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
-        self.local_avg_state_dict = [[] for _ in range(self.num_cluster)]
-        self.total_cluster_size = [0 for _ in range(self.num_cluster)]
+        self.global_model_parameters = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
+        self.global_client_sizes = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
+        self.avg_state_dict = [[] for _ in range(self.num_cluster)]
         if self.mode_cluster:
             self.first_layer_clients_in_each_cluster = [0 for _ in range(self.num_cluster)]
         else:
             self.first_layer_clients_in_each_cluster = [0]
-        self.current_infor_cluster = [[0] * len(row) for row in self.infor_cluster]
-        self.current_local_training_round = [0 for _ in range(len(self.infor_cluster))]
 
     def start(self):
         self.channel.start_consuming()
@@ -608,22 +466,22 @@ class Server:
         )
 
     def avg_all_parameters(self, cluster: int):
-        layer_sizes = self.local_client_sizes[cluster]
-        layer_params = self.local_model_parameters[cluster]
+        layer_sizes = self.global_client_sizes[cluster]
+        layer_params = self.global_model_parameters[cluster]
 
         for layer_idx, list_state_dicts in enumerate(layer_params):
             list_sizes = layer_sizes[layer_idx]
             if not list_state_dicts or not list_sizes:
-                self.local_avg_state_dict[cluster].append({})
+                self.avg_state_dict[cluster].append({})
                 continue
             avg_sd = src.Utils.fedavg_state_dicts(list_state_dicts, weights=list_sizes)
-            self.local_avg_state_dict[cluster].append(avg_sd)
+            self.avg_state_dict[cluster].append(avg_sd)
 
     def concatenate_and_avg_clusters(self):
         cluster_state_dicts = []
 
         for c in range(self.num_cluster):
-            avg_layers = self.local_avg_state_dict[c] or []
+            avg_layers = self.avg_state_dict[c] or []
             if not avg_layers:
                 print(f"Warning: cluster {c} has no averaged layers, skipping.")
                 continue
