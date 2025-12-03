@@ -9,7 +9,6 @@ from src.train.Bert import Train_Bert
 from src.train.ViT import Train_ViT
 from src.dataset.dataloader import data_loader
 
-
 class RpcClient:
     def __init__(self, client_id, layer_id, channel, device):
         self.client_id = client_id
@@ -65,7 +64,6 @@ class RpcClient:
 
             # Load model
             if self.model is None:
-
                 klass = globals()[f'{model_name}_{data_name}']
 
                 if cut_layers[1] != 0:

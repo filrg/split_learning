@@ -4,12 +4,13 @@ from src.dataset.dataloader import data_loader
 
 from src.model import *
 
-def val_VGG16(data_name, state_dict_full, logger):
+
+def val_ViT(data_name, state_dict_full, logger):
     criterion = nn.CrossEntropyLoss()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     test_loader = data_loader(data_name=data_name, train=False)
 
-    klass = globals()[f'VGG16_{data_name}']
+    klass = globals()[f'ViT_{data_name}']
     model = klass()
     model.load_state_dict(state_dict_full)
     model.eval()
@@ -32,6 +33,6 @@ def val_VGG16(data_name, state_dict_full, logger):
     avg_loss = total_loss / len(test_loader)
 
     print('Test set:Loss: {:.4f}; Accuracy: {}/{} ({:.2f}%)\n'.format(avg_loss,
-     correct, total, acc))
+                                                                      correct, total, acc))
     logger.log_info('Test set:Loss: {:.4f}; Accuracy: {}/{} ({:.2f}%)\n'.format(avg_loss,
-     correct, total, acc))
+                                                                                correct, total, acc))

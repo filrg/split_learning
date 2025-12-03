@@ -9,7 +9,7 @@ import torch.nn as nn
 
 import src.Log
 
-class Train_VGG16:
+class Train_ViT:
     def __init__(self, client_id, layer_id, channel, device):
         self.client_id = client_id
         self.layer_id = layer_id

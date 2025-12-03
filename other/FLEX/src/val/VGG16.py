@@ -11,6 +11,7 @@ def val_VGG16(data_name, state_dict_full, logger):
 
     klass = globals()[f'VGG16_{data_name}']
     model = klass()
+    model = model.to(device)
     model.load_state_dict(state_dict_full)
     model.eval()
 

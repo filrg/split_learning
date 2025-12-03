@@ -5,10 +5,8 @@ import pickle
 import sys
 import numpy as np
 import copy
-import src.Model
 import src.Log
 import src.Utils
-import src.Validation
 
 from src.Cluster import clustering_algorithm
 from src.Selection import auto_threshold
@@ -100,9 +98,18 @@ class Server:
 
     def distribution(self):
         if self.non_iid:
-            label_distribution = np.random.dirichlet([self.data_distribution["dirichlet"]["alpha"]] * self.num_label,
-                                                     self.total_clients[0])
-
+            # label_distribution = np.random.dirichlet([self.data_distribution["dirichlet"]["alpha"]] * self.num_label,
+            #                                          self.total_clients[0])
+            label_distribution = np.array([[0.1, 0.1, 0.1, 0.1, 0.1, 0.9, 0.9, 0.9, 0.9, 0.9],
+                                           [0.1, 0.1, 0.1, 0.1, 0.1, 0.9, 0.9, 0.9, 0.9, 0.9],
+                                           [0.1, 0.1, 0.1, 0.1, 0.1, 0.9, 0.9, 0.9, 0.9, 0.9],
+                                           [0.9, 0.9, 0.9, 0.9, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1],
+                                           [0.9, 0.9, 0.9, 0.9, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1],
+                                           [0.9, 0.9, 0.9, 0.9, 0.9, 0.1, 0.1, 0.1, 0.1, 0.1],
+                                           [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+                                           [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
+                                           [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+                                           ])
             self.label_counts = (label_distribution * self.num_sample).astype(int)
         else:
             self.label_counts = np.full((self.total_clients[0], self.num_label), self.num_sample // self.num_label)
