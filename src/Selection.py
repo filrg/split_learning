@@ -3,23 +3,51 @@ import numpy as np
 import heapq
 
 def auto_threshold(performance, n_init=9):
-    if len(performance) > 1:
-        X = np.log(np.array(performance)).reshape(-1, 1)
+    performance = np.array(performance, dtype=float)
+    if performance.size <= 1:
+        return 0.0
 
-        gm  = GaussianMixture(n_components=2, n_init=n_init, covariance_type='full').fit(X)
+    X = np.log(performance).reshape(-1, 1)
+    gm = GaussianMixture(
+        n_components=2,
+        n_init=n_init,
+        covariance_type='full',
+        random_state=0
+    ).fit(X)
+    mu_raw = gm.means_.flatten()
+    order = np.argsort(mu_raw)
+    mu  = mu_raw[order]
+    var = gm.covariances_.reshape(-1)[order]
+    w   = gm.weights_[order]
 
-        mu  = np.sort(gm.means_.flatten())          # μ1 < μ2
-        var = gm.covariances_.flatten()[np.argsort(gm.means_.flatten())]
-        w   = gm.weights_[np.argsort(gm.means_.flatten())]
+    a = var[0] - var[1]
+    b = 2 * (var[1]*mu[0] - var[0]*mu[1])
+    c = (var[0]*mu[1]**2
+         - var[1]*mu[0]**2
+         + 2*var[0]*var[1]*np.log((var[1]*w[0])/(var[0]*w[1])))
 
-        a = var[0] - var[1]
-        b = 2*(var[1]*mu[0] - var[0]*mu[1])
-        c = var[0]*mu[1]**2 - var[1]*mu[0]**2 + 2*var[0]*var[1]*np.log((var[1]*w[0])/(var[0]*w[1]))
-        roots = np.roots([a, b, c])
-        thresh_log = np.real(roots[(roots>mu[0]) & (roots<mu[1])][0])
-        return np.exp(thresh_log)
+    if np.isclose(a, 0):
+        if np.isclose(b, 0):
+            thresh_log = np.mean(mu)
+        else:
+            root = -c / b
+            if mu[0] < root < mu[1]:
+                thresh_log = root
+            else:
+                thresh_log = np.mean(mu)
     else:
-        return 0
+        roots = np.roots([a, b, c])
+        real_roots = roots[np.isreal(roots)].real
+        candidates = real_roots[(real_roots > mu[0]) & (real_roots < mu[1])]
+
+        if candidates.size > 0:
+            mid = np.mean(mu)
+            thresh_log = candidates[np.argmin(np.abs(candidates - mid))]
+        else:
+            thresh_log = np.mean(mu)
+
+    return float(np.exp(thresh_log))
+
 
 def lpt(layer2, layer1, num_cluster):
 
@@ -40,16 +68,3 @@ def lpt(layer2, layer1, num_cluster):
         layer1[min_index] = max(layer1) + 1
 
     return clusters
-
-# layer1 = [1]
-# layer2 = [
-#         ("A", 9),
-#         ("B", 7),
-#         ("C", 5),
-#         ("D", 3),
-#         ("E", 2),
-#         ("F", 1)
-#     ]
-# num = 1
-# a = lpt(layer2, layer1, num)
-# print(a)

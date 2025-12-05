@@ -137,8 +137,7 @@ class Train_VGG16:
                                 end_data = True
 
                     if end_data and (num_forward == num_backward):
-                        if mode_limited_time is False:
-                            break
+                        break
 
                 if end_training is True:
                     break
