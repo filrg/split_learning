@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from src.model import *
 
 def test(model_name, data_name, state_dict_full, logger):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if data_name == "MNIST":
         transform_test = transforms.Compose([
             transforms.ToTensor(),
@@ -37,11 +38,14 @@ def test(model_name, data_name, state_dict_full, logger):
     model = klass()
 
     model.load_state_dict(state_dict_full)
+    model = model.to(device)
     # evaluation mode
     model.eval()
     test_loss = 0
     correct = 0
     for data, target in tqdm(test_loader):
+        data = data.to(device)
+        target = target.to(device)
         output = model(data)
         test_loss += F.nll_loss(output, target, reduction='sum').item()
         pred = output.data.max(1, keepdim=True)[1]  # get the index of the max log-probability

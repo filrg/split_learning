@@ -47,9 +47,7 @@ class RpcClient:
             model_name = self.response["model_name"]
             cut_layers = self.response['layers']
             label_count = self.response['label_count']
-            clip_grad_norm = self.response['clip_grad_norm']
             data_name = self.response["data_name"]
-            config_time = self.response["config_time"]
             local_round = self.response["local_round"]
 
             if self.label_count is None:
@@ -114,10 +112,10 @@ class RpcClient:
                 subset = torch.utils.data.Subset(self.train_set, selected_indices)
                 train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
 
-                result, size = self.train_func(self.model, lr, momentum, clip_grad_norm, train_loader, config_time=config_time, local_round=local_round)
+                result, size = self.train_func(self.model, lr, momentum, train_loader, local_round=local_round)
 
             else:
-                result, size = self.train_func(self.model, lr, momentum, clip_grad_norm, None, local_round=local_round)
+                result, size = self.train_func(self.model, lr, momentum, None, local_round=local_round)
 
             # Stop training, then send parameters to server
             model_state_dict = copy.deepcopy(self.model.state_dict())

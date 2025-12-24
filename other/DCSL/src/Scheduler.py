@@ -6,7 +6,7 @@ import torch.optim as optim
 import torch.nn as nn
 
 import src.Log
-
+from tqdm import tqdm
 
 class Scheduler:
     def __init__(self, client_id, layer_id, channel, device):
@@ -16,7 +16,7 @@ class Scheduler:
         self.device = device
         self.data_count = 0
 
-    def send_intermediate_output(self, data_idx, output, labels, trace):
+    def send_intermediate_output(self, output, labels, trace):
 
         forward_queue_name = f'intermediate_queue_{self.layer_id}'
 
@@ -25,12 +25,12 @@ class Scheduler:
         if trace:
             trace.append(self.client_id)
             message = pickle.dumps(
-                {"data_idx": data_idx, "data": output.detach().cpu().numpy(), "label": labels.cpu().numpy(),
+                {"data": output.detach().cpu().numpy(), "label": labels.cpu().numpy(),
                  "trace": trace}
             )
         else:
             message = pickle.dumps(
-                {"data_idx": data_idx, "data": output.detach().cpu().numpy(), "label": labels.cpu().numpy(),
+                {"data": output.detach().cpu().numpy(), "label": labels.cpu().numpy(),
                  "trace": [self.client_id]}
             )
 
@@ -40,14 +40,14 @@ class Scheduler:
             body=message
         )
 
-    def send_gradient(self, idx, gradient, trace):
+    def send_gradient(self, gradient, trace):
         to_client_id = trace[-1]
         trace.pop(-1)
         backward_queue_name = f'gradient_queue_{self.layer_id - 1}_{to_client_id}'
         self.channel.queue_declare(queue=backward_queue_name, durable=False)
 
         message = pickle.dumps(
-            {"idx": idx, "data": gradient.detach().cpu().numpy(), "trace": trace})
+            {"data": gradient.detach().cpu().numpy(), "trace": trace})
 
         self.channel.basic_publish(
             exchange='',
@@ -61,11 +61,9 @@ class Scheduler:
                                    routing_key='rpc_queue',
                                    body=pickle.dumps(message))
 
-    def train_on_first_layer(self, model, lr, momentum, clip_grad_norm,
-                             train_loader=None, config_time=None, local_round=5):
+    def train_on_first_layer(self, model, lr, momentum, train_loader=None, local_round=3):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
 
-        size_store = 0
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
         self.channel.queue_declare(queue=backward_queue_name, durable=False)
         self.channel.basic_qos(prefetch_count=1)
@@ -74,55 +72,40 @@ class Scheduler:
 
         for i in range(local_round):
             data_iter = iter(train_loader)
-            data_store = torch.tensor([])
             src.Log.print_with_color(f'Forward epoch {i}', 'green')
-            while True:
-                try:
-                    training_data, labels = next(data_iter)
-                    data_store = torch.cat((data_store, training_data), dim=0)
-                    training_data = training_data.to(self.device)
-                    intermediate_output = model(training_data)
-                    intermediate_output = intermediate_output.detach().requires_grad_(True)
 
-                    self.data_count += 1
+            with tqdm(total=len(train_loader), desc="Processing", unit="step") as pbar:
+                while True:
+                    try:
+                        training_data, labels = next(data_iter)
+                        training_data = training_data.to(self.device)
+                        intermediate_output = model(training_data)
+                        intermediate_output = intermediate_output.detach().requires_grad_(True)
 
-                    self.send_intermediate_output(size_store, intermediate_output, labels, trace=None)
-                    size_store += 1
+                        self.data_count += 1
 
-                except StopIteration:
-                    break
+                        self.send_intermediate_output(intermediate_output, labels, trace=None)
+                        while True:
+                            model.train()
+                            optimizer.zero_grad()
+                            method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
+                            if method_frame and body:
+                                received_data = pickle.loads(body)
+                                gradient_numpy = received_data["data"]
+                                gradient = torch.tensor(gradient_numpy).to(self.device)
 
-            list_grad = [torch.tensor([]) for _ in range(size_store)]
-            grad_store = torch.tensor([])
+                                output = model(training_data)
+                                output.backward(gradient=gradient)
+                                optimizer.step()
+                                break
+                            else:
+                                time.sleep(0.5)
+                                continue
 
-            src.Log.print_with_color(f'Wait backward epoch {i}', 'green')
-            count = 0
-            while True:
-                # Process gradient
-                method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
+                        pbar.update(1)
 
-                if method_frame and body:
-                    received_data = pickle.loads(body)
-                    gradient_numpy = received_data["data"]
-                    idx = received_data["idx"]
-                    gradient = torch.tensor(gradient_numpy)
-                    list_grad[idx] = gradient
-                    count += 1
-                    if count == size_store:
+                    except StopIteration:
                         break
-            for tensor_grad in list_grad:
-                grad_store = torch.cat((grad_store, tensor_grad), dim=0)
-
-            model.train()
-            optimizer.zero_grad()
-            data_store = data_store.to(self.device)
-            out = model(data_store)
-            grad_store = grad_store.to(self.device)
-
-            out.backward(gradient=grad_store)
-            optimizer.step()
-
-            size_store = 0
 
         notify_data = {"action": "NOTIFY", "client_id": self.client_id, "layer_id": self.layer_id,
                        "message": "Finish training!"}
@@ -141,7 +124,7 @@ class Scheduler:
                     return True
             time.sleep(0.5)
 
-    def train_on_last_layer(self, model, lr, momentum, clip_grad_norm):
+    def train_on_last_layer(self, model, lr, momentum):
 
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
         result = True
@@ -157,32 +140,28 @@ class Scheduler:
         infor_data = []
         tensor_data = torch.tensor([])
         tensor_label = torch.tensor([])
-        training_flag = False
-        time_out = time.time()
+        count = 0
 
         while True:
+
             method_frame, header_frame, body = self.channel.basic_get(queue=forward_queue_name, auto_ack=True)
             if method_frame and body:
-
-                training_flag = True
                 received_data = pickle.loads(body)
                 intermediate_output_numpy = received_data["data"]
                 labels_numpy = received_data["label"]
                 trace = received_data["trace"]
-                data_idx = received_data["data_idx"]
 
                 labels = torch.tensor(labels_numpy)
                 intermediate_output = torch.tensor(intermediate_output_numpy, requires_grad=True)
 
-                infor_data.append((data_idx, trace, intermediate_output.size(0)))
+                infor_data.append((trace, intermediate_output.size(0)))
                 tensor_data = torch.cat((tensor_data, intermediate_output), dim=0)
                 tensor_label = torch.cat((tensor_label, labels), dim=0)
 
-                time_out = time.time()
                 self.data_count += 1
+                count += 1
             else:
-                if (time.time() - time_out) > 2 and training_flag is True:
-                    training_flag = False
+                if count == 3:
                     model.train()
                     optimizer.zero_grad()
                     tensor_data = tensor_data.to(self.device)
@@ -198,23 +177,22 @@ class Scheduler:
                         result = False
 
                     loss.backward()
-                    if clip_grad_norm and clip_grad_norm > 0:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
 
                     optimizer.step()
                     gradient = tensor_data.grad
 
-                    for (idx, trace, size) in infor_data:
+                    for (trace, size) in infor_data:
                         grad, new_gradient = gradient.split([size, gradient.size(0) - size], dim=0)
                         gradient = new_gradient
 
-                        self.send_gradient(idx, grad, trace)
+                        self.send_gradient(grad, trace)
 
                     infor_data = []
                     tensor_data = torch.tensor([])
                     tensor_label = torch.tensor([])
+                    count = 0
 
-                if training_flag is False:
+                else:
                     broadcast_queue_name = f'reply_{self.client_id}'
                     method_frame, header_frame, body = self.channel.basic_get(queue=broadcast_queue_name, auto_ack=True)
                     if body:
@@ -223,13 +201,11 @@ class Scheduler:
                         if received_data["action"] == "PAUSE":
                             return result
 
-    def train_on_device(self, model, lr, momentum, clip_grad_norm, train_loader=None, config_time=None,
-                        local_round=None):
+    def train_on_device(self, model, lr, momentum, train_loader=None, local_round=None):
         self.data_count = 0
         if self.layer_id == 1:
-            result = self.train_on_first_layer(model, lr, momentum, clip_grad_norm, train_loader, config_time,
-                                               local_round)
+            result = self.train_on_first_layer(model, lr, momentum, train_loader,local_round)
         else:
-            result = self.train_on_last_layer(model, lr, momentum, clip_grad_norm)
+            result = self.train_on_last_layer(model, lr, momentum)
 
         return result, self.data_count

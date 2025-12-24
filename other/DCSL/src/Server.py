@@ -35,16 +35,15 @@ class Server:
         self.batch_size = config["learning"]["batch-size"]
         self.lr = config["learning"]["learning-rate"]
         self.momentum = config["learning"]["momentum"]
-        self.clip_grad_norm = config["learning"]["clip-grad-norm"]
         self.data_distribution = config["server"]["data-distribution"]
 
         # Data distribution
         self.non_iid = self.data_distribution["non-iid"]
         self.num_label = self.data_distribution["num-label"]
         self.num_sample = self.data_distribution["num-sample"]
-        self.refresh_each_round = self.data_distribution["refresh-each-round"]
         self.random_seed = config["server"]["random-seed"]
         self.label_counts = None
+        self.label_ = None
 
         if self.random_seed:
             random.seed(self.random_seed)
@@ -75,15 +74,13 @@ class Server:
         self.idx = 0
         self.current_clients_cluster = 0
 
-        # Time training
-        self.config_time = config["server"]["limited-time"]
-
         self.channel.basic_qos(prefetch_count=1)
         self.reply_channel = self.connection.channel()
         self.channel.basic_consume(queue='rpc_queue', on_message_callback=self.on_request)
 
         debug_mode = config["debug_mode"]
         self.logger = src.Log.Logger(f"{log_path}/app.log", debug_mode)
+        src.Log.print_with_color(f"Application start. Server is waiting for {self.total_clients} clients.", "green")
         self.logger.log_info(f"Application start. Server is waiting for {self.total_clients} clients.")
 
     def distribution(self):
@@ -91,20 +88,28 @@ class Server:
             # label_distribution = np.random.dirichlet([self.data_distribution["dirichlet"]["alpha"]] * self.num_label,
             #                                          self.total_clients[0])
 
-            label_distribution = np.array([[0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-                                           [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                                           [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-                                           [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-                                           [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                                           [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-                                           [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-                                           [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                                           [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-                                           ])
+            label_distribution = np.array(
+                [[0.0, 0.0, 0.0, 0.0, 0.0, 0.09394938, 0.20495232, 0.25764745, 0.20563418, 0.23781668],
+                 [0.2824181, 0.132361, 0.09816592, 0.16999675, 0.31705823, 0.0, 0.0, 0.0, 0.0, 0.0],
+                 [0.08073514, 0.13786255, 0.06125086, 0.08391925, 0.04435898, 0.0445482, 0.07578602, 0.18663911,
+                  0.20118637, 0.08371351],
+                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.07172973, 0.24979451, 0.28449692, 0.17334935, 0.22062949],
+                 [0.25640487, 0.32848751, 0.08951943, 0.24333781, 0.08225038, 0.0, 0.0, 0.0, 0.0, 0.0],
+                 [0.14757221, 0.05964236, 0.06489429, 0.16269761, 0.11871837, 0.0630334, 0.07481413, 0.0249723,
+                  0.10654056, 0.17711471],
+                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.35767604, 0.14840493, 0.24900655, 0.06997417, 0.17493831],
+                 [0.19780106, 0.31160452, 0.23068388, 0.11227246, 0.14763808, 0.0, 0.0, 0.0, 0.0, 0.0],
+                 [0.12532717, 0.05295416, 0.10434852, 0.07494715, 0.12291418, 0.0860416, 0.08839187, 0.07168553,
+                  0.20919395, 0.06419587],
+                 ])
 
             self.label_counts = (label_distribution * self.num_sample).astype(int)
+            self.label_ = copy.deepcopy(self.label_counts)
+            self.label_ = self.label_.tolist()
         else:
             self.label_counts = np.full((self.total_clients[0], self.num_label), self.num_sample // self.num_label)
+            self.label_ = copy.deepcopy(self.label_counts)
+            self.label_ = self.label_.tolist()
 
     def on_request(self, ch, method, props, body):
         message = pickle.loads(body)
@@ -210,6 +215,8 @@ class Server:
 
                     if self.round > 0:
                         self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
+                        self.label_ = copy.deepcopy(self.label_counts)
+                        self.label_ = self.label_.tolist()
                         self.notify_clients()
                     else:
                         self.notify_clients(start=False)
@@ -219,12 +226,7 @@ class Server:
 
     def notify_clients(self, start=True, register=True, idx = 0):
         if start:
-
-            label_ = copy.deepcopy(self.label_counts)
-            label_ = label_.tolist()
-
             if register:
-
                 klass = globals()[f'{self.model_name}_{self.data_name}']
 
                 for (client_id, layer_id, cluster) in self.device_begin:
@@ -261,7 +263,7 @@ class Server:
                         self.logger.log_info(f"File {filepath} does not exist.")
 
                     if layer_id == 1:
-                        label = label_.pop()
+                        label = self.label_.pop()
                     else:
                         label = []
 
@@ -276,19 +278,17 @@ class Server:
                                 "batch_size": self.batch_size,
                                 "lr": self.lr,
                                 "momentum": self.momentum,
-                                "clip_grad_norm": self.clip_grad_norm,
                                 "label_count": label,
-                                "config_time": self.config_time,
                                 "local_round": self.local_round
                                 }
 
                     self.send_to_response(client_id, pickle.dumps(response))
 
             else:
-                label = label_.pop()
                 layers = [0, self.list_cut_layers[0]]
                 for (client_id, layer_id, cluster) in self.edge_device:
-                    if cluster == self.idx:
+                    if cluster == idx:
+                        label = self.label_.pop()
                         response = {"action": "START",
                                     "message": "Server accept the connection!",
                                     "parameters": self.global_model_parameters[layer_id - 1],
@@ -298,9 +298,7 @@ class Server:
                                     "batch_size": self.batch_size,
                                     "lr": self.lr,
                                     "momentum": self.momentum,
-                                    "clip_grad_norm": self.clip_grad_norm,
                                     "label_count": label,
-                                    "config_time": self.config_time,
                                     "local_round": self.local_round
                                     }
 
