@@ -14,8 +14,9 @@ class Train_Bert:
         self.channel = channel
         self.device = device
         self.data_count = 0
+        self.size = None
 
-    def send_intermediate_output(self, data_id, output, attention_mask, labels, trace, cluster=None):
+    def send_intermediate_output(self, data_id, output, labels, trace, cluster=None):
 
         forward_queue_name = f'intermediate_queue_{self.layer_id}_{cluster}'
         self.channel.queue_declare(forward_queue_name, durable=False)
@@ -23,14 +24,15 @@ class Train_Bert:
         if trace:
             trace.append(self.client_id)
             message = pickle.dumps(
-                {"data_id": data_id, "data": output.detach().cpu().numpy(), "label": labels.cpu(), "trace": trace,
-                "attention_mask": attention_mask.cpu()}
+                {"data_id": data_id, "data": output.detach().cpu().numpy(), "label": labels.cpu(), "trace": trace}
             )
         else:
             message = pickle.dumps(
-                {"data_id": data_id, "data": output.detach().cpu().numpy(), "label": labels.cpu(), "trace": [self.client_id],
-                "attention_mask" :attention_mask.cpu()}
+                {"data_id": data_id, "data": output.detach().cpu().numpy(), "label": labels.cpu(), "trace": [self.client_id]}
             )
+        if self.size is None:
+            self.size = len(message)
+            print(f'Length message: {self.size} (bytes).')
 
         self.channel.basic_publish(
             exchange='',
@@ -45,8 +47,11 @@ class Train_Bert:
         self.channel.queue_declare(queue=backward_queue_name, durable=False)
 
         message = pickle.dumps(
-            {"data_id": data_id, "data": gradient.detach().cpu().numpy(), "trace": trace, "test": False})
+            {"data_id": data_id, "data": gradient.detach().cpu().numpy(), "trace": trace})
 
+        if self.size is None:
+            self.size = len(message)
+            print(f'Length message: {self.size} (bytes).')
         self.channel.basic_publish(
             exchange='',
             routing_key=backward_queue_name,
@@ -59,9 +64,10 @@ class Train_Bert:
                                    routing_key='rpc_queue',
                                    body=pickle.dumps(message))
 
-    def train_on_first_layer(self, model, lr, momentum, clip_grad_norm, control_count=1,
-                             train_loader=None, cluster=None, config_time=None):
-        optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
+    def train_on_first_layer(self, model, lr, weight_decay, clip_grad_norm,
+                             control_count=1, train_loader=None, cluster=0, config_time=None):
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+
         mode_limited_time = config_time["enable"]
         limited_time = config_time["time"]
         if mode_limited_time:
@@ -99,15 +105,14 @@ class Train_Bert:
                         data_id = received_data["data_id"]
 
                         data_input = data_store.pop(data_id)
-                        output = model(x=data_input[0], attention_mask=data_input[1])
+                        output = model(input_ids=data_input)
                         output.backward(gradient=gradient)
                         optimizer.step()
                     else:
                         # speed control
-                        if len(data_store) > control_count:
+                        if len(data_store) >= control_count:
                             continue
 
-                        # Limited time control
                         if ((time.time() - start) > limited_time) and mode_limited_time is True:
                             if i > 0:
                                 end_data = True
@@ -120,28 +125,24 @@ class Train_Bert:
                             try:
                                 batch = next(data_iter)
                                 input_ids = batch['input_ids'].to(self.device)
-                                attention_mask = batch['attention_mask'].to(self.device)
                                 labels = batch['labels'].to(self.device)
                                 data_id = uuid.uuid4()
-                                data_store[data_id] = (input_ids, attention_mask)
+                                data_store[data_id] = input_ids
 
-                                intermediate_output = model(x=input_ids, attention_mask=attention_mask)
+                                intermediate_output = model(input_ids=input_ids)
                                 intermediate_output = intermediate_output.detach().requires_grad_(True)
 
                                 num_forward += 1
                                 self.data_count += 1
 
                                 pbar.update(1)
-
-                                self.send_intermediate_output(data_id, intermediate_output, attention_mask,
-                                                              labels, trace=None, cluster=cluster)
+                                self.send_intermediate_output(data_id, intermediate_output, labels, trace=None, cluster=cluster)
 
                             except StopIteration:
                                 end_data = True
 
                     if end_data and (num_forward == num_backward):
-                        if mode_limited_time is False:
-                            break
+                        break
 
                 if end_training is True:
                     break
@@ -153,7 +154,7 @@ class Train_Bert:
         self.send_to_server(notify_data)
 
         broadcast_queue_name = f'reply_{self.client_id}'
-        while True:  # Wait for broadcast
+        while True:
             method_frame, header_frame, body = self.channel.basic_get(queue=broadcast_queue_name, auto_ack=True)
             if body:
                 received_data = pickle.loads(body)
@@ -162,8 +163,8 @@ class Train_Bert:
                     return True, self.data_count
             time.sleep(0.5)
 
-    def train_on_last_layer(self, model, lr, momentum, clip_grad_norm, cluster):
-        optimizer = torch.optim.AdamW(model.parameters(), lr=2e-5)
+    def train_on_last_layer(self, model, lr, weight_decay, clip_grad_norm, cluster=0):
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
         criterion = nn.CrossEntropyLoss()
         result = True
 
@@ -180,14 +181,12 @@ class Train_Bert:
                 optimizer.zero_grad()
                 received_data = pickle.loads(body)
                 intermediate_output_numpy = received_data["data"]
-                attention_mask = received_data["attention_mask"].to(self.device)
                 trace = received_data["trace"]
                 data_id = received_data["data_id"]
                 labels = received_data["label"].to(self.device)
+                intermediate_output = torch.tensor(intermediate_output_numpy, requires_grad=True).float().to(self.device)
 
-                intermediate_output = torch.tensor(intermediate_output_numpy, requires_grad=True).to(self.device)
-
-                output = model(x=intermediate_output, attention_mask=attention_mask)
+                output = model(input_ids=intermediate_output)
 
                 loss = criterion(output, labels)
 
@@ -198,16 +197,13 @@ class Train_Bert:
                 print(f"Loss: {loss.item()}")
                 intermediate_output.retain_grad()
                 loss.backward()
-                if clip_grad_norm and clip_grad_norm > 0:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
 
                 optimizer.step()
                 self.data_count += 1
 
                 gradient = intermediate_output.grad
+                self.send_gradient(data_id, gradient, trace)
 
-                self.send_gradient(data_id, gradient, trace)  # 1F1B
-            # Check training process
             else:
                 broadcast_queue_name = f'reply_{self.client_id}'
                 method_frame, header_frame, body = self.channel.basic_get(queue=broadcast_queue_name, auto_ack=True)
@@ -222,14 +218,6 @@ class Train_Bert:
 
     def alone_training(self, model, lr, momentum, clip_grad_norm, train_loader=None, cluster=None):
         pass
-
-
-
-
-
-
-
-
 
 
 

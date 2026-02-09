@@ -10,11 +10,11 @@ server:
     - 1
     - 1
   no-cluster:
-    cut-layers: [7]
+    cut-layers: [1]
   manual-cluster:
     num-cluster: 1
     cut-layers:
-      - [7]
+      - [1]
     infor-cluster:
       - [1,1]
   model: VGG16
@@ -57,7 +57,3 @@ learning:
   control-count: 3
   clip-grad-norm: 0.0
 
-profiling:
-  round-train-test: 20
-  round-comm-test: 100
-  batch-size: 32

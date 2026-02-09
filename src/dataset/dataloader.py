@@ -20,7 +20,7 @@ def EMOTION(batch_size=None, distribution=None, train=True):
         download_mode='reuse_dataset_if_exists',
         cache_dir='./hf_cache'
     )
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
 
     if train:
         train_texts, train_labels = load_train_EMOTION(dataset, distribution)
@@ -71,7 +71,7 @@ def MNIST(batch_size=None, distribution=None, train = True):
             transforms.ToTensor(),
             transforms.Normalize((0.5,), (0.5,))
         ])
-        train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
+        train_set = torchvision.datasets.FashionMNIST(root='./data', train=True, download=True,
                                                     transform=transform_train)
         label_to_indices = defaultdict(list)
         for idx, (_, label) in tqdm(enumerate(train_set)):
@@ -89,7 +89,7 @@ def MNIST(batch_size=None, distribution=None, train = True):
             transforms.ToTensor(),
             transforms.Normalize((0.5,), (0.5,))
         ])
-        test_set = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform_test)
+        test_set = torchvision.datasets.FashionMNIST(root='./data', train=False, download=True, transform=transform_test)
         test_loader = torch.utils.data.DataLoader(test_set, batch_size=100, shuffle=False, num_workers=2)
         return test_loader
 

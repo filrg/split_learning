@@ -7,7 +7,7 @@ import copy
 import src.Log
 import src.Utils
 
-from algorithm.partition import partition
+from src.model.Bert_EMOTION import Bert
 from src.model import *
 from src.val.get_val import get_val
 
@@ -79,17 +79,27 @@ class Server:
         src.Log.print_with_color(f"Application start. Server is waiting for {self.total_clients} clients.", "green")
 
     def distribution(self):
+        label_distribution = np.array([
+            [0.25, 0.25, 0.25, 0.25],
+            [0.25, 0.25, 0.25, 0.25],
+            [0.25, 0.25, 0.25, 0.25],
+            [0.25, 0.25, 0.25, 0.25]]
+        )
+        # label_distribution = np.array(
+        #     [[0.0, 0.0, 0.0, 0.0, 0.0, 0.09394938, 0.20495232, 0.25764745, 0.20563418, 0.23781668],
+        #      [0.0, 0.0, 0.0, 0.0, 0.0, 0.07172973, 0.24979451, 0.28449692, 0.17334935, 0.22062949],
+        #      [0.0, 0.0, 0.0, 0.0, 0.0, 0.35767604, 0.14840493, 0.24900655, 0.06997417, 0.17493831],
+        #      [0.2824181, 0.132361, 0.09816592, 0.16999675, 0.31705823, 0.0, 0.0, 0.0, 0.0, 0.0],
+        #      [0.25640487, 0.32848751, 0.08951943, 0.24333781, 0.08225038, 0.0, 0.0, 0.0, 0.0, 0.0],
+        #      [0.19780106, 0.31160452, 0.23068388, 0.11227246, 0.14763808, 0.0, 0.0, 0.0, 0.0, 0.0],
+        #      [0.08073514, 0.13786255, 0.06125086, 0.08391925, 0.04435898, 0.0445482, 0.07578602, 0.18663911, 0.20118637,
+        #       0.08371351],
+        #      [0.14757221, 0.05964236, 0.06489429, 0.16269761, 0.11871837, 0.0630334, 0.07481413, 0.0249723, 0.10654056,
+        #       0.17711471],
+        #      [0.12532717, 0.05295416, 0.10434852, 0.07494715, 0.12291418, 0.0860416, 0.08839187, 0.07168553, 0.20919395,
+        #       0.06419587],
+        #      ])
 
-        label_distribution = np.array([[0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-                                       [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                                       [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-                                       [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-                                       [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                                       [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-                                       [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-                                       [1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                                       [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5],
-                                       ])
         self.label_counts = (label_distribution * self.num_sample).astype(int)
 
 
@@ -205,8 +215,6 @@ class Server:
 
     def notify_clients(self, start=True, register=True):
         # Send message to clients when consumed all clients
-        klass = globals()[f'{self.model_name}_{self.data_name}']
-
         for (client_id, layer_id, _, cluster, _, _, label) in self.list_clients:
             # Read parameters file
             filepath = f'{self.model_name}_{self.data_name}.pth'
@@ -225,20 +233,45 @@ class Server:
                     if os.path.exists(filepath):
                         full_state_dict = torch.load(filepath, weights_only=True)
 
-                        if layer_id == 1:
-                            if layers == [0, 0]:
-                                model = klass()
+                        if self.model_name != 'Bert':
+                            klass = globals()[f'{self.model_name}_{self.data_name}']
+                            if layer_id == 1:
+                                if layers == [0, 0]:
+                                    model = klass()
+                                else:
+                                    model = klass(end_layer=layers[1])
+                            elif layer_id == len(self.total_clients):
+                                model = klass(start_layer=layers[0])
                             else:
-                                model = klass(end_layer=layers[1])
-                        elif layer_id == len(self.total_clients):
-                            model = klass(start_layer=layers[0])
-                        else:
-                            model = klass(start_layer=layers[0], end_layer=layers[1])
-                        state_dict = model.state_dict()
-                        keys = state_dict.keys()
+                                model = klass(start_layer=layers[0], end_layer=layers[1])
+                            state_dict = model.state_dict()
+                            keys = state_dict.keys()
 
-                        for key in keys:
-                            state_dict[key] = full_state_dict[key]
+                            for key in keys:
+                                state_dict[key] = full_state_dict[key]
+
+                        else:
+                            klass = Bert
+                            if layer_id == 1:
+                                model = klass(layer_id=1, n_block=layers[1])
+                                state_dict = model.state_dict()
+                                keys = state_dict.keys()
+
+                                for key in keys:
+                                    state_dict[key] = full_state_dict[key]
+                            else:
+                                model = klass(layer_id=2, n_block=12 - layers[0])
+                                state_dict = model.state_dict()
+                                state_dict = src.Utils.change_keys(state_dict, layers[0], True)
+                                keys = state_dict.keys()
+
+                                for key in keys:
+                                    state_dict[key] = full_state_dict[key]
+
+                                state_dict = src.Utils.change_keys(state_dict, layers[0], False)
+
+                            src.Log.print_with_color(f"Load pretrain model successfully", "green")
+
 
                     else:
                         self.logger.log_info(f"File {filepath} does not exist.")
@@ -275,23 +308,6 @@ class Server:
                 client_id, layer_id, performance, cluster, exe_time, net, self.label_counts.pop())
             else:
                 self.list_clients[idx] = (client_id, layer_id, performance, cluster, exe_time, net, [])
-
-        self.list_cut_layers = []
-        for id_cluster in range(self.num_cluster):
-            exe_time_layer_1 = []
-            net_layer_1 = []
-            exe_time_layer_2 = []
-            net_layer_2 = []
-            for (client_id, layer_id, performance, cluster, exe_time, net ,label) in self.list_clients:
-                if cluster == id_cluster:
-                    if layer_id == 1:
-                        exe_time_layer_1.append(exe_time)
-                        net_layer_1.append(net)
-                    else:
-                        exe_time_layer_2.append(exe_time)
-                        net_layer_2.append(net)
-            cut_point = partition(exe_time_layer_1, net_layer_1, exe_time_layer_2, net_layer_2, self.size_data)
-            self.list_cut_layers.append(cut_point)
 
         self.global_model_parameters = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
         self.global_client_sizes = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
@@ -336,8 +352,15 @@ class Server:
             full_dict = {}
             if self.list_cut_layers[c][0] != 0:
                 for idx, layer_dict in enumerate(avg_layers):
-                    sd = layer_dict
-                    full_dict.update(copy.deepcopy(sd))
+                    if idx == 0:
+                        sd = layer_dict
+                        full_dict.update(copy.deepcopy(sd))
+                    else:
+                        if self.model_name == 'Bert':
+                            sd = src.Utils.change_keys(layer_dict, self.list_cut_layers[c][0], True)
+                        else:
+                            sd = layer_dict
+                        full_dict.update(copy.deepcopy(sd))
             else:
                 full_dict.update(copy.deepcopy(avg_layers[0]))
 
@@ -349,3 +372,4 @@ class Server:
         global_state = src.Utils.fedavg_state_dicts(cluster_state_dicts)
 
         return global_state
+

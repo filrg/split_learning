@@ -76,3 +76,21 @@ def fedavg_state_dicts(state_dicts, weights = None):
         avg_dict[key] = avg
 
     return avg_dict
+
+def change_keys(state_dict, num, increase=True):
+    exclude_prefix = ["h.", "layers."]
+    new_state_dict = {}
+    for k, v in state_dict.items():
+        if any(k.startswith(prefix) for prefix in exclude_prefix):
+            parts = k.split(".")
+            if increase:
+                parts[1] = str(int(parts[1]) + num)
+            else:
+                parts[1] = str(int(parts[1]) - num)
+            new_key = ".".join(parts)
+            new_state_dict[new_key] = v
+        else:
+            new_state_dict[k] = v
+            continue
+
+    return new_state_dict

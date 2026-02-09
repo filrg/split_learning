@@ -20,7 +20,7 @@ python client.py --layer_id 1
 - **Layer2** have 3 DAI. 
 ### Model and Dataset
 - VGG16
-- CIFAR10 with 2500 or 25 images in each device.  (two cases)
+- CIFAR10 with 2500 or 200 images in each device.  (two cases)
 ```yaml
   data-distribution:
     non-iid: False

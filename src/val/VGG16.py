@@ -12,6 +12,7 @@ def val_VGG16(data_name, state_dict_full, logger):
     klass = globals()[f'VGG16_{data_name}']
     model = klass()
     model.load_state_dict(state_dict_full)
+    model.to(device)
     model.eval()
 
     correct, total, total_loss = 0, 0, 0
