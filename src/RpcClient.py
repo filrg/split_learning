@@ -8,6 +8,7 @@ from src.model.Bert_EMOTION import Bert
 from src.train.VGG16 import Train_VGG16
 from src.train.Bert import Train_Bert
 from src.train.ViT import Train_ViT
+from src.train.KWT import Train_KWT
 from src.dataset.dataloader import data_loader
 
 from peft import LoraConfig, TaskType, get_peft_model
@@ -64,6 +65,8 @@ class RpcClient:
                 )
             elif model_name == 'ViT':
                 self.model_train = Train_ViT(self.client_id, self.layer_id, self.channel, self.device)
+            elif model_name == 'KWT':
+                self.model_train = Train_KWT(self.client_id, self.layer_id, self.channel, self.device)
 
             if self.label_count is None:
                 self.label_count = label_count

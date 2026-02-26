@@ -13,6 +13,7 @@ from datasets import load_dataset
 from src.dataset.EMOTION import EMOTIONDataset
 from src.dataset.EMOTION import load_train_EMOTION
 from src.dataset.EMOTION import load_test_EMOTION
+from src.dataset.SPEECHCOMMANDS import SpeechCommandsDataset
 
 def EMOTION(batch_size=None, distribution=None, train=True):
     dataset = load_dataset(
@@ -20,7 +21,7 @@ def EMOTION(batch_size=None, distribution=None, train=True):
         download_mode='reuse_dataset_if_exists',
         cache_dir='./hf_cache'
     )
-    tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
+    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
     if train:
         train_texts, train_labels = load_train_EMOTION(dataset, distribution)
@@ -71,7 +72,7 @@ def MNIST(batch_size=None, distribution=None, train = True):
             transforms.ToTensor(),
             transforms.Normalize((0.5,), (0.5,))
         ])
-        train_set = torchvision.datasets.FashionMNIST(root='./data', train=True, download=True,
+        train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
                                                     transform=transform_train)
         label_to_indices = defaultdict(list)
         for idx, (_, label) in tqdm(enumerate(train_set)):
@@ -89,8 +90,42 @@ def MNIST(batch_size=None, distribution=None, train = True):
             transforms.ToTensor(),
             transforms.Normalize((0.5,), (0.5,))
         ])
-        test_set = torchvision.datasets.FashionMNIST(root='./data', train=False, download=True, transform=transform_test)
+        test_set = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform_test)
         test_loader = torch.utils.data.DataLoader(test_set, batch_size=100, shuffle=False, num_workers=2)
+        return test_loader
+
+def SPEECHCOMMANDS(batch_size=None, distribution=None, train=True):
+    """Google Speech Commands V2 dataset loader for KWT model"""
+    if train:
+        dataset = SpeechCommandsDataset(root='./data', subset='training')
+        
+        if distribution is not None:
+            # Build label index from samples list directly (avoid reading wav files)
+            from src.dataset.SPEECHCOMMANDS import CLASSES
+            label_to_indices = defaultdict(list)
+            for idx, (audio_path, label_name) in enumerate(dataset.samples):
+                if label_name in CLASSES:
+                    label_idx = CLASSES.index(label_name)
+                else:
+                    label_idx = CLASSES.index('unknown')
+                label_to_indices[label_idx].append(idx)
+            
+            selected_indices = []
+            for label, count in enumerate(distribution):
+                if count > 0 and label in label_to_indices:
+                    available = label_to_indices[label]
+                    selected_indices.extend(random.sample(available, min(count, len(available))))
+            
+            print(f"[DEBUG] Selected {len(selected_indices)} samples after distribution filter")
+            subset = torch.utils.data.Subset(dataset, selected_indices)
+            train_loader = DataLoader(subset, batch_size=batch_size, shuffle=True)
+        else:
+            train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+        
+        return train_loader
+    else:
+        dataset = SpeechCommandsDataset(root='./data', subset='testing')
+        test_loader = DataLoader(dataset, batch_size=100, shuffle=False)
         return test_loader
 
 def data_loader(data_name=None, batch_size=None, distribution=None, train=True):
@@ -98,6 +133,8 @@ def data_loader(data_name=None, batch_size=None, distribution=None, train=True):
         data = EMOTION(batch_size, distribution, train)
     elif data_name == 'MNIST':
         data = MNIST(batch_size, distribution, train)
+    elif data_name == 'SPEECHCOMMANDS':
+        data = SPEECHCOMMANDS(batch_size, distribution, train)
     else:
         data = CIFAR10(batch_size, distribution, train)
 

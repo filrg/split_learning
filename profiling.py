@@ -5,6 +5,7 @@ import numpy as np
 from src.model.Bert_EMOTION import Bert
 from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
 from src.model.VGG16_MNIST import VGG16_MNIST
+from src.model.KWT_SPEECHCOMMANDS import KWT_SPEECHCOMMANDS
 from src.dataset.dataloader import data_loader
 from tqdm import tqdm
 import pickle
@@ -165,11 +166,54 @@ def profiling_vgg(data_name, size=32, rounds=100):
             "training speed": round(float(32 / (sum(exe_time) * 1e-9)), 2)}
     return info
 
+def profiling_kwt(size=32, rounds=100):
+    """Profiling for KWT model (17 layers)"""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = KWT_SPEECHCOMMANDS()
+    model.to(device)
+
+    # Layer operations matching model.forward()
+    layers = [
+        lambda x: model.layer1(x.transpose(1, 2)),
+        lambda x: torch.cat([model.cls_token.expand(x.size(0), -1, -1), x], dim=1),
+        lambda x: model.dropout(x + model.pos_embed),
+    ] + [
+        (lambda l: lambda x: l(x))(getattr(model, f'layer{4+i}')) for i in range(12)
+    ] + [
+        lambda x: model.layer16(x[:, 0]),
+        lambda x: model.layer17(x),
+    ]
+    weight_backward = [2, 2, 2] + [3]*12 + [2, 2]
+
+    data_size = []
+    forward_time = []
+    for r in tqdm(range(rounds)):
+        x = torch.randn(size, 40, 98).to(device)
+        model.train()
+        times = []
+        for fn in layers:
+            start = time.time()
+            x = fn(x)
+            times.append((time.time() - start) * 1e9)
+            if r == 0:
+                data_size.append(x.nelement() * x.element_size())
+        forward_time.append(times)
+
+    forward_time = np.average(np.array(forward_time), axis=0)
+    exe_time = (forward_time + forward_time * np.array(weight_backward)).tolist()
+
+    return {"execute training time": exe_time,
+            "total time": int(sum(exe_time)),
+            "list of data size": data_size,
+            "training speed": round(float(size / (sum(exe_time) * 1e-9)), 2)}
+
 def profiling(model_name=None, data_name=None, layer_id=0, size=4, rounds=100):
     if os.path.exists("profiling.json"):
         os.remove("profiling.json")
     if model_name == 'bert':
         info = profiling_bert(layer_id, batch_size=size, rounds=rounds)
+    elif model_name == 'KWT':
+        info = profiling_kwt(size=size, rounds=rounds)
     else:
         info = profiling_vgg(data_name, size=size, rounds=rounds)
 

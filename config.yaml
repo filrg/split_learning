@@ -17,8 +17,8 @@ server:
       - [1]
     infor-cluster:
       - [1,1]
-  model: VGG16
-  data-name: CIFAR10
+  model: KWT
+  data-name: SPEECHCOMMANDS
   parameters:
     load: True
     save: True
@@ -26,7 +26,7 @@ server:
   data-distribution:
     non-iid: False
     num-sample: 5000
-    num-label: 10
+    num-label: 12
     dirichlet:
       alpha: 1
     refresh-each-round: True
@@ -51,9 +51,9 @@ log_path: .
 debug_mode: True
 
 learning:
-  learning-rate: 0.01
+  learning-rate: 0.0005
   momentum: 0.5
   batch-size: 32
   control-count: 3
-  clip-grad-norm: 0.0
+  clip-grad-norm: 1.0
 
