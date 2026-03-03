@@ -238,7 +238,7 @@ class Server:
                      # fedasync
                     self.fedasync_aggregate(out_idx, in_cluster_avg_sd)
                     
-                    #  Sequential Out-cluster
+                    #  sequential Out-cluster
                     if out_idx not in self.finished_in_clusters_count:
                         self.finished_in_clusters_count[out_idx] = 0
                     self.finished_in_clusters_count[out_idx] += 1
