@@ -35,6 +35,8 @@ class Server:
         self.batch_size = config["learning"]["batch-size"]
         self.lr = config["learning"]["learning-rate"]
         self.momentum = config["learning"]["momentum"]
+        self.lr_decay = config["learning"].get("lr-decay", 0.5)
+        self.lr_step = config["learning"].get("lr-step", 10)
         self.data_distribution = config["server"]["data-distribution"]
 
         # Data distribution
@@ -88,20 +90,16 @@ class Server:
             # label_distribution = np.random.dirichlet([self.data_distribution["dirichlet"]["alpha"]] * self.num_label,
             #                                          self.total_clients[0])
 
-            label_distribution = np.array(
-                [[0.0, 0.0, 0.0, 0.0, 0.0, 0.09394938, 0.20495232, 0.25764745, 0.20563418, 0.23781668],
-                 [0.2824181, 0.132361, 0.09816592, 0.16999675, 0.31705823, 0.0, 0.0, 0.0, 0.0, 0.0],
-                 [0.08073514, 0.13786255, 0.06125086, 0.08391925, 0.04435898, 0.0445482, 0.07578602, 0.18663911,
-                  0.20118637, 0.08371351],
-                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.07172973, 0.24979451, 0.28449692, 0.17334935, 0.22062949],
-                 [0.25640487, 0.32848751, 0.08951943, 0.24333781, 0.08225038, 0.0, 0.0, 0.0, 0.0, 0.0],
-                 [0.14757221, 0.05964236, 0.06489429, 0.16269761, 0.11871837, 0.0630334, 0.07481413, 0.0249723,
-                  0.10654056, 0.17711471],
-                 [0.0, 0.0, 0.0, 0.0, 0.0, 0.35767604, 0.14840493, 0.24900655, 0.06997417, 0.17493831],
-                 [0.19780106, 0.31160452, 0.23068388, 0.11227246, 0.14763808, 0.0, 0.0, 0.0, 0.0, 0.0],
-                 [0.12532717, 0.05295416, 0.10434852, 0.07494715, 0.12291418, 0.0860416, 0.08839187, 0.07168553,
-                  0.20919395, 0.06419587],
-                 ])
+            label_distribution = np.array([[0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1],
+                                           [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.1],
+                                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.1],
+                                           [0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1],
+                                           [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.1],
+                                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.1],
+                                           [0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1],
+                                           [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.1],
+                                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.1],
+                                           ])
 
             self.label_counts = (label_distribution * self.num_sample).astype(int)
             self.label_ = copy.deepcopy(self.label_counts)
@@ -144,27 +142,33 @@ class Server:
                 self.distribution()
                 src.Log.print_with_color("All clients are connected. Sending notifications.", "green")
                 self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
+                self.current_lr = self.lr
+                self.sda_size = max(self.info_cluster) if self.info_cluster else 1
+                self.logger.log_info(f"Learning rate: {self.current_lr}, SDA size: {self.sda_size}")
                 self.notify_clients()
 
         elif action == "NOTIFY":
             src.Log.print_with_color(f"[<<<] Received message from client: {message}", "blue")
-            message = {"action": "PAUSE",
+            pause_message = {"action": "PAUSE",
                        "message": "Pause training and please send your parameters",
                        "parameters": None}
             if self.idx < self.num_cluster - 1:
+                # Intermediate cluster: count layer-1 devices finishing
                 self.current_clients_cluster += 1
                 if self.current_clients_cluster == self.info_cluster[self.idx]:
                     self.current_clients_cluster = 0
-                    for (client_id, layer_id, cluster) in self.edge_device:
-                        if cluster == self.idx:
-                            self.send_to_response(client_id, pickle.dumps(message))
+                    # PAUSE only edge devices of this cluster
+                    # Layer-2 device keeps running for all clusters
+                    for (cid, lid, cl) in self.edge_device:
+                        if cl == self.idx:
+                            self.send_to_response(cid, pickle.dumps(pause_message))
             else:
+                # Final cluster: PAUSE all stop devices (edge + layer-2)
                 self.current_clients_cluster += 1
                 if self.current_clients_cluster == self.info_cluster[self.idx]:
                     self.current_clients_cluster = 0
-                    for (client_id, layer_id, cluster) in self.device_stop:
-
-                        self.send_to_response(client_id, pickle.dumps(message))
+                    for (cid, lid, cl) in self.device_stop:
+                        self.send_to_response(cid, pickle.dumps(pause_message))
 
         elif action == "UPDATE":
             data_message = message["message"]
@@ -173,16 +177,25 @@ class Server:
             client_size = message["size"]
             src.Log.print_with_color(f"[<<<] Received message from {client_id}: {data_message}", "blue")
             if self.idx < self.num_cluster - 1:
+                # Inter-cluster: collect params from current cluster's devices
                 self.global_model_parameters[layer_id - 1].append(model_state_dict)
+                self.global_client_sizes[layer_id - 1].append(client_size)
                 self.current_clients_cluster += 1
                 if self.current_clients_cluster == self.info_cluster[self.idx]:
                     self.idx += 1
+                    # FedAvg the collected parameters
                     self.avg_all_parameters()
-                    self.global_model_parameters[layer_id -1] = self.avg_state_dict[0]
-                    self.notify_clients(register=False, idx=self.idx)
-                    self.current_clients_cluster = 0
-                    self.global_model_parameters[layer_id - 1] = []
+                    # The averaged model for layer becomes the initial model for next cluster
+                    # avg_state_dict is a list of dicts (one per layer),
+                    # we pass the edge-device layer (index 0) to next cluster's edge devices
+                    avg_model = self.avg_state_dict[0] if self.avg_state_dict else {}
+                    # Reset for next cluster
+                    self.global_model_parameters = [[] for _ in range(len(self.total_clients))]
+                    self.global_client_sizes = [[] for _ in range(len(self.total_clients))]
                     self.avg_state_dict = []
+                    self.current_clients_cluster = 0
+                    # Notify next cluster with averaged model
+                    self.notify_clients(register=False, idx=self.idx, avg_model=avg_model)
             else:
                 self.current_clients += 1
                 if not result:
@@ -214,7 +227,12 @@ class Server:
                     self.round_result = True
 
                     if self.round > 0:
-                        self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
+                        current_round = self.global_round - self.round + 1
+                        # Step decay: reduce LR by lr_decay every lr_step rounds
+                        num_decays = current_round // self.lr_step
+                        self.current_lr = self.lr * (self.lr_decay ** num_decays)
+                        self.logger.log_info(f"Start training round {current_round}")
+                        self.logger.log_info(f"Learning rate: {self.current_lr}")
                         self.label_ = copy.deepcopy(self.label_counts)
                         self.label_ = self.label_.tolist()
                         self.notify_clients()
@@ -224,7 +242,7 @@ class Server:
 
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
-    def notify_clients(self, start=True, register=True, idx = 0):
+    def notify_clients(self, start=True, register=True, idx=0, avg_model=None):
         if start:
             if register:
                 klass = globals()[f'{self.model_name}_{self.data_name}']
@@ -276,30 +294,33 @@ class Server:
                                 "model_name": self.model_name,
                                 "data_name": self.data_name,
                                 "batch_size": self.batch_size,
-                                "lr": self.lr,
+                                "lr": self.current_lr,
                                 "momentum": self.momentum,
                                 "label_count": label,
-                                "local_round": self.local_round
+                                "local_round": self.local_round,
+                                "sda_size": self.sda_size
                                 }
 
                     self.send_to_response(client_id, pickle.dumps(response))
 
             else:
+                # Inter-cluster: send averaged model to next cluster's edge devices
                 layers = [0, self.list_cut_layers[0]]
                 for (client_id, layer_id, cluster) in self.edge_device:
                     if cluster == idx:
                         label = self.label_.pop()
                         response = {"action": "START",
                                     "message": "Server accept the connection!",
-                                    "parameters": self.global_model_parameters[layer_id - 1],
+                                    "parameters": avg_model,
                                     "layers": layers,
                                     "model_name": self.model_name,
                                     "data_name": self.data_name,
                                     "batch_size": self.batch_size,
-                                    "lr": self.lr,
+                                    "lr": self.current_lr,
                                     "momentum": self.momentum,
                                     "label_count": label,
-                                    "local_round": self.local_round
+                                    "local_round": self.local_round,
+                                    "sda_size": self.sda_size
                                     }
 
                         self.send_to_response(client_id, pickle.dumps(response))
@@ -331,10 +352,12 @@ class Server:
 
         for layer_idx, list_state_dicts in enumerate(layer_params):
             list_sizes = layer_sizes[layer_idx]
-            if not list_state_dicts or not list_sizes:
+            if not list_state_dicts:
                 self.avg_state_dict.append({})
                 continue
-            avg_sd = src.Utils.fedavg_state_dicts(list_state_dicts, weights=list_sizes)
+            # Use sizes as weights if available, otherwise equal weight
+            weights = list_sizes if list_sizes else None
+            avg_sd = src.Utils.fedavg_state_dicts(list_state_dicts, weights=weights)
             self.avg_state_dict.append(avg_sd)
 
     def concatenate_and_avg_clusters(self):

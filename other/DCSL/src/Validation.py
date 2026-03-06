@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 import torchvision
 import torchvision.transforms as transforms
-import torch.nn.functional as F
+import torch.nn as nn
 
 from src.model import *
 
@@ -29,6 +29,7 @@ def test(model_name, data_name, state_dict_full, logger):
 
     test_loader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
 
+    criterion = nn.CrossEntropyLoss()
 
     klass = globals()[f'{model_name}_{data_name}']
 
@@ -39,27 +40,32 @@ def test(model_name, data_name, state_dict_full, logger):
 
     model.load_state_dict(state_dict_full)
     model = model.to(device)
-    # evaluation mode
     model.eval()
+
     test_loss = 0
     correct = 0
-    for data, target in tqdm(test_loader):
-        data = data.to(device)
-        target = target.to(device)
-        output = model(data)
-        test_loss += F.nll_loss(output, target, reduction='sum').item()
-        pred = output.data.max(1, keepdim=True)[1]  # get the index of the max log-probability
-        correct += pred.eq(target.data.view_as(pred)).long().cpu().sum()
+    total = 0
 
-    test_loss /= len(test_loader.dataset)
-    accuracy = 100.0 * correct / len(test_loader.dataset)
+    with torch.no_grad():
+        for data, target in tqdm(test_loader):
+            data = data.to(device)
+            target = target.to(device)
+            output = model(data)
+            loss = criterion(output, target)
+            test_loss += loss.item() * target.size(0)
+            pred = output.argmax(dim=1)
+            correct += pred.eq(target).sum().item()
+            total += target.size(0)
+
+    test_loss /= total
+    accuracy = 100.0 * correct / total
     print('Test set: Average loss: {:.4f}, Accuracy: {}/{} ({:.2f}%)\n'.format(
-        test_loss, correct, len(test_loader.dataset), accuracy))
+        test_loss, correct, total, accuracy))
 
     if np.isnan(test_loss) or math.isnan(test_loss) or abs(test_loss) > 10e5:
         return False
     else:
         logger.log_info('Test set: Average loss: {:.4f}, Accuracy: {}/{} ({:.2f}%)\n'.format(
-            test_loss, correct, len(test_loader.dataset), accuracy))
+            test_loss, correct, total, accuracy))
 
     return True

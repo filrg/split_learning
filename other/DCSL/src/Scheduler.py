@@ -1,6 +1,8 @@
 import time
 import pickle
+import uuid
 
+import numpy as np
 import torch
 import torch.optim as optim
 import torch.nn as nn
@@ -16,7 +18,7 @@ class Scheduler:
         self.device = device
         self.data_count = 0
 
-    def send_intermediate_output(self, output, labels, trace):
+    def send_intermediate_output(self, output, labels, trace, data_id=None):
 
         forward_queue_name = f'intermediate_queue_{self.layer_id}'
 
@@ -26,12 +28,12 @@ class Scheduler:
             trace.append(self.client_id)
             message = pickle.dumps(
                 {"data": output.detach().cpu().numpy(), "label": labels.cpu().numpy(),
-                 "trace": trace}
+                 "trace": trace, "data_id": data_id}
             )
         else:
             message = pickle.dumps(
                 {"data": output.detach().cpu().numpy(), "label": labels.cpu().numpy(),
-                 "trace": [self.client_id]}
+                 "trace": [self.client_id], "data_id": data_id}
             )
 
         self.channel.basic_publish(
@@ -40,14 +42,14 @@ class Scheduler:
             body=message
         )
 
-    def send_gradient(self, gradient, trace):
+    def send_gradient(self, gradient, trace, data_id=None):
         to_client_id = trace[-1]
         trace.pop(-1)
         backward_queue_name = f'gradient_queue_{self.layer_id - 1}_{to_client_id}'
         self.channel.queue_declare(queue=backward_queue_name, durable=False)
 
         message = pickle.dumps(
-            {"data": gradient.detach().cpu().numpy(), "trace": trace})
+            {"data": gradient.detach().cpu().numpy(), "trace": trace, "data_id": data_id})
 
         self.channel.basic_publish(
             exchange='',
@@ -62,6 +64,10 @@ class Scheduler:
                                    body=pickle.dumps(message))
 
     def train_on_first_layer(self, model, lr, momentum, train_loader=None, local_round=3):
+        """
+        Synchronous training: forward 1 batch → wait for gradient → backward → next batch.
+        Edge device does NOT send multiple batches before receiving gradient.
+        """
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
 
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
@@ -71,51 +77,49 @@ class Scheduler:
         model.to(self.device)
 
         for i in range(local_round):
-            data_iter = iter(train_loader)
-            src.Log.print_with_color(f'Forward epoch {i}', 'green')
+            src.Log.print_with_color(f'Epoch {i}', 'green')
 
             with tqdm(total=len(train_loader), desc="Processing", unit="step") as pbar:
-                while True:
-                    try:
-                        training_data, labels = next(data_iter)
-                        training_data = training_data.to(self.device)
-                        intermediate_output = model(training_data)
-                        intermediate_output = intermediate_output.detach().requires_grad_(True)
+                for training_data, labels in train_loader:
+                    training_data = training_data.to(self.device)
 
-                        self.data_count += 1
+                    # Step 1: Forward
+                    data_id = str(uuid.uuid4())
+                    intermediate_output = model(training_data)
+                    intermediate_output = intermediate_output.detach().requires_grad_(True)
 
-                        self.send_intermediate_output(intermediate_output, labels, trace=None)
-                        while True:
+                    self.data_count += 1
+                    pbar.update(1)
+
+                    # Step 2: Send smashed data to server
+                    self.send_intermediate_output(intermediate_output, labels, trace=None, data_id=data_id)
+
+                    # Step 3: Wait for gradient (blocking)
+                    while True:
+                        method_frame, header_frame, body = self.channel.basic_get(
+                            queue=backward_queue_name, auto_ack=True)
+                        if method_frame and body:
+                            received_data = pickle.loads(body)
+                            gradient = torch.tensor(received_data["data"]).to(self.device)
+
+                            # Step 4: Backward
                             model.train()
                             optimizer.zero_grad()
-                            method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
-                            if method_frame and body:
-                                received_data = pickle.loads(body)
-                                gradient_numpy = received_data["data"]
-                                gradient = torch.tensor(gradient_numpy).to(self.device)
+                            output = model(training_data)
+                            output.backward(gradient=gradient)
+                            optimizer.step()
+                            break
+                        time.sleep(0.01)
 
-                                output = model(training_data)
-                                output.backward(gradient=gradient)
-                                optimizer.step()
-                                break
-                            else:
-                                time.sleep(0.5)
-                                continue
-
-                        pbar.update(1)
-
-                    except StopIteration:
-                        break
-
+        # Finish training, notify server
         notify_data = {"action": "NOTIFY", "client_id": self.client_id, "layer_id": self.layer_id,
                        "message": "Finish training!"}
-
-        # Finish epoch training, send notify to server
         src.Log.print_with_color("[>>>] Finish training!", "red")
         self.send_to_server(notify_data)
 
+        # Wait for PAUSE
         broadcast_queue_name = f'reply_{self.client_id}'
-        while True:  # Wait for broadcast
+        while True:
             method_frame, header_frame, body = self.channel.basic_get(queue=broadcast_queue_name, auto_ack=True)
             if body:
                 received_data = pickle.loads(body)
@@ -124,88 +128,102 @@ class Scheduler:
                     return True
             time.sleep(0.5)
 
-    def train_on_last_layer(self, model, lr, momentum):
+    def _process_sda_batch(self, model, optimizer, criterion, collected):
+        """
+        SDA (Smashed Data Aggregation) — Eq. 4-5 from paper.
+        Concatenate smashed data from all clients, forward once,
+        split gradient back to each client.
+        """
+        batch_sizes = [item["data"].shape[0] for item in collected]
+        traces = [item["trace"] for item in collected]
+        data_ids = [item["data_id"] for item in collected]
 
+        # Eq. 4: S_c = concat(σ_1, σ_2, ..., σ_|D_c|)
+        all_data = np.concatenate([item["data"] for item in collected], axis=0)
+        all_labels = np.concatenate([item["label"] for item in collected], axis=0)
+
+        concat_intermediate = torch.tensor(all_data, requires_grad=True).to(self.device)
+        concat_labels = torch.tensor(all_labels).to(self.device)
+
+        model.train()
+        optimizer.zero_grad()
+        concat_intermediate.retain_grad()
+
+        # Eq. 5: ŷ = f(S_c | W)
+        output = model(concat_intermediate)
+        loss = criterion(output, concat_labels.long())
+        print(f"Loss (SDA, {len(collected)} clients, {sum(batch_sizes)} samples): {loss.item():.4f}")
+
+        result = True
+        if torch.isnan(loss).any():
+            src.Log.print_with_color("NaN detected in loss", "yellow")
+            result = False
+
+        loss.backward()
+        optimizer.step()
+
+        self.data_count += sum(batch_sizes)
+
+        # Split gradient back to each client
+        concat_grad = concat_intermediate.grad
+        grad_splits = torch.split(concat_grad, batch_sizes, dim=0)
+
+        for grad, trace, data_id in zip(grad_splits, traces, data_ids):
+            self.send_gradient(grad, trace, data_id=data_id)
+
+        return result
+
+    def train_on_last_layer(self, model, lr, momentum, sda_size=1):
+        """
+        SDA: collect exactly 1 batch from each client,
+        concat and forward once, split gradient back.
+        Since edge devices are synchronous, no overflow needed.
+        """
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
         result = True
-
         criterion = nn.CrossEntropyLoss()
 
         forward_queue_name = f'intermediate_queue_{self.layer_id - 1}'
-
         self.channel.queue_declare(queue=forward_queue_name, durable=False)
         self.channel.basic_qos(prefetch_count=1)
-        print('Waiting for intermediate output. To exit press CTRL+C')
+        print(f'Waiting for intermediate output (SDA size={sda_size}). To exit press CTRL+C')
         model.to(self.device)
-        infor_data = []
-        tensor_data = torch.tensor([])
-        tensor_label = torch.tensor([])
-        count = 0
+
+        sda_batch = {}  # {client_id: data} — exactly 1 batch per client
 
         while True:
-
             method_frame, header_frame, body = self.channel.basic_get(queue=forward_queue_name, auto_ack=True)
             if method_frame and body:
                 received_data = pickle.loads(body)
-                intermediate_output_numpy = received_data["data"]
-                labels_numpy = received_data["label"]
-                trace = received_data["trace"]
+                client_id = received_data["trace"][0]
+                sda_batch[client_id] = received_data
 
-                labels = torch.tensor(labels_numpy)
-                intermediate_output = torch.tensor(intermediate_output_numpy, requires_grad=True)
-
-                infor_data.append((trace, intermediate_output.size(0)))
-                tensor_data = torch.cat((tensor_data, intermediate_output), dim=0)
-                tensor_label = torch.cat((tensor_label, labels), dim=0)
-
-                self.data_count += 1
-                count += 1
-            else:
-                if count == 3:
-                    model.train()
-                    optimizer.zero_grad()
-                    tensor_data = tensor_data.to(self.device)
-                    tensor_data.retain_grad()
-                    tensor_label = tensor_label.to(self.device)
-
-                    output = model(tensor_data)
-                    loss = criterion(output, tensor_label.long())
-                    print(f"Loss: {loss.item()}")
-
-                    if torch.isnan(loss).any():
-                        src.Log.print_with_color("NaN detected in loss", "yellow")
+                # When we have 1 batch from each client → SDA forward
+                if len(sda_batch) >= sda_size:
+                    batch_result = self._process_sda_batch(model, optimizer, criterion, list(sda_batch.values()))
+                    if not batch_result:
                         result = False
+                    sda_batch = {}
+            else:
+                # Check for PAUSE
+                broadcast_queue_name = f'reply_{self.client_id}'
+                method_frame, header_frame, body = self.channel.basic_get(queue=broadcast_queue_name, auto_ack=True)
+                if body:
+                    received_data = pickle.loads(body)
+                    src.Log.print_with_color(f"[<<<] Received message from server {received_data}", "blue")
+                    if received_data["action"] == "PAUSE":
+                        # Process remaining
+                        if sda_batch:
+                            batch_result = self._process_sda_batch(model, optimizer, criterion, list(sda_batch.values()))
+                            if not batch_result:
+                                result = False
+                        return result
 
-                    loss.backward()
-
-                    optimizer.step()
-                    gradient = tensor_data.grad
-
-                    for (trace, size) in infor_data:
-                        grad, new_gradient = gradient.split([size, gradient.size(0) - size], dim=0)
-                        gradient = new_gradient
-
-                        self.send_gradient(grad, trace)
-
-                    infor_data = []
-                    tensor_data = torch.tensor([])
-                    tensor_label = torch.tensor([])
-                    count = 0
-
-                else:
-                    broadcast_queue_name = f'reply_{self.client_id}'
-                    method_frame, header_frame, body = self.channel.basic_get(queue=broadcast_queue_name, auto_ack=True)
-                    if body:
-                        received_data = pickle.loads(body)
-                        src.Log.print_with_color(f"[<<<] Received message from server {received_data}", "blue")
-                        if received_data["action"] == "PAUSE":
-                            return result
-
-    def train_on_device(self, model, lr, momentum, train_loader=None, local_round=None):
+    def train_on_device(self, model, lr, momentum, train_loader=None, local_round=None, sda_size=1):
         self.data_count = 0
         if self.layer_id == 1:
-            result = self.train_on_first_layer(model, lr, momentum, train_loader,local_round)
+            result = self.train_on_first_layer(model, lr, momentum, train_loader, local_round)
         else:
-            result = self.train_on_last_layer(model, lr, momentum)
+            result = self.train_on_last_layer(model, lr, momentum, sda_size)
 
         return result, self.data_count

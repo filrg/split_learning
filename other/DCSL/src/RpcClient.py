@@ -98,6 +98,7 @@ class RpcClient:
             batch_size = self.response["batch_size"]
             lr = self.response["lr"]
             momentum = self.response["momentum"]
+            sda_size = self.response.get("sda_size", 1)
 
             # Read parameters and load to model
             if state_dict:
@@ -115,7 +116,7 @@ class RpcClient:
                 result, size = self.train_func(self.model, lr, momentum, train_loader, local_round=local_round)
 
             else:
-                result, size = self.train_func(self.model, lr, momentum, None, local_round=local_round)
+                result, size = self.train_func(self.model, lr, momentum, None, local_round=local_round, sda_size=sda_size)
 
             # Stop training, then send parameters to server
             model_state_dict = copy.deepcopy(self.model.state_dict())

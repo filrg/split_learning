@@ -65,7 +65,7 @@ class Train_KWT:
 
     def train_on_first_layer(self, model, lr, momentum, clip_grad_norm, control_count=5,
                              train_loader=None, cluster=None, config_time=None):
-        optimizer = optim.Adam(model.parameters(), lr=lr)
+        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
 
         mode_limited_time = config_time["enable"]
         limited_time = config_time["time"]
@@ -159,7 +159,7 @@ class Train_KWT:
             time.sleep(0.5)
 
     def train_on_last_layer(self, model, lr, momentum, clip_grad_norm, cluster):
-        optimizer = optim.Adam(model.parameters(), lr=lr)
+        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
         result = True
 
         criterion = nn.CrossEntropyLoss()
@@ -211,7 +211,7 @@ class Train_KWT:
                         return result, self.data_count
 
     def train_on_middle_layer(self, model, lr, momentum, clip_grad_norm, control_count=5, cluster=None):
-        optimizer = optim.Adam(model.parameters(), lr=lr)
+        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
 
         forward_queue_name = f'intermediate_queue_{self.layer_id - 1}'
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
@@ -274,7 +274,7 @@ class Train_KWT:
                         return True, self.data_count
 
     def alone_training(self, model, lr, momentum, clip_grad_norm, train_loader=None, cluster=None):
-        optimizer = optim.Adam(model.parameters(), lr=lr)
+        optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
         criterion = nn.CrossEntropyLoss()
         print('Waiting for training. To exit press CTRL+C')
         

@@ -102,7 +102,11 @@ class RpcClient:
 
             # Read parameters and load to model
             if state_dict:
-                self.model.load_state_dict(state_dict)
+                if model_name == 'KWT':
+                    state_dict = {k: v for k, v in state_dict.items() if 'ln' not in k and 'layer16' not in k}
+                    self.model.load_state_dict(state_dict, strict=False)
+                else:
+                    self.model.load_state_dict(state_dict)
 
             if model_name == 'Bert':
                 self.model = get_peft_model(self.model, self.peft_config)

@@ -214,6 +214,11 @@ class Server:
 
                 if self.round > 0:
                     self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
+                    
+                    if self.model_name == 'KWT':
+                        self.lr = self.lr * 0.99
+                        self.logger.log_info(f"Decayed Learning Rate to {self.lr:.6f}")
+
                     if self.save_parameters:
                         self.notify_clients()
                     else:
