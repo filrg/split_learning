@@ -1,40 +1,32 @@
 import time
 import pickle
-import pika
-import random
 import copy
-import torchvision
-import torchvision.transforms as transforms
-
-from collections import defaultdict
-from tqdm import tqdm
 
 import src.Log
-import src.Model
 from src.model import *
+from src.model.Bert_EMOTION import Bert
+from src.train.VGG16 import Train_VGG16
+from src.train.Bert import Train_Bert
+from src.train.ViT import Train_ViT
+from src.train.KWT import Train_KWT
+from src.dataset.dataloader import data_loader
 
+from peft import LoraConfig, TaskType, get_peft_model
 
 class RpcClient:
-    def __init__(self, client_id, layer_id, address, username, password, train_func, device):
+    def __init__(self, client_id, layer_id, channel, device):
         self.client_id = client_id
         self.layer_id = layer_id
-        self.address = address
-        self.username = username
-        self.password = password
-        self.train_func = train_func
+        self.channel = channel
+        self.model_train = None
+        self.train_loader = None
         self.device = device
 
-        self.channel = None
-        self.connection = None
         self.response = None
         self.model = None
-        self.global_model = None
         self.cluster = None
         self.label_count = None
-        self.connect()
-
-        self.train_set = None
-        self.label_to_indices = None
+        self.peft_config = None
 
     def wait_response(self):
         status = True
@@ -53,13 +45,28 @@ class RpcClient:
         state_dict = self.response["parameters"]
 
         if action == "START":
-            special = self.response["special"]
             model_name = self.response["model_name"]
             cut_layers = self.response['layers']
             label_count = self.response['label_count']
             num_layers = self.response['num_layers']
             clip_grad_norm = self.response['clip_grad_norm']
             data_name = self.response["data_name"]
+            config_time = self.response["config_time"]
+
+            if model_name == 'VGG16':
+                self.model_train = Train_VGG16(self.client_id, self.layer_id, self.channel, self.device)
+            elif model_name == 'Bert':
+                self.model_train = Train_Bert(self.client_id, self.layer_id, self.channel, self.device)
+                self.peft_config = LoraConfig(
+                    task_type="SEQ_CLS",
+                    r=8, lora_alpha=16, lora_dropout=0.1,
+                    bias="none",
+                    target_modules=["query", "key", "value", "dense"]
+                )
+            elif model_name == 'ViT':
+                self.model_train = Train_ViT(self.client_id, self.layer_id, self.channel, self.device)
+            elif model_name == 'KWT':
+                self.model_train = Train_KWT(self.client_id, self.layer_id, self.channel, self.device)
 
             if self.label_count is None:
                 self.label_count = label_count
@@ -68,58 +75,11 @@ class RpcClient:
             if self.label_count is not None:
                 src.Log.print_with_color(f"Label distribution of client: {self.label_count}", "yellow")
 
-            # Load training dataset
-            if self.layer_id == 1 and data_name and not self.train_set and not self.label_to_indices:
-                if data_name == "MNIST":
-                    transform_train = transforms.Compose([
-                        transforms.ToTensor(),
-                        transforms.Normalize((0.5,), (0.5,))
-                    ])
-                    self.train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
-                                                                transform=transform_train)
-                elif data_name == "FASHION_MNIST":
-                    transform_train = transforms.Compose([
-                        transforms.ToTensor(),
-                        transforms.Normalize((0.5,), (0.5,))
-                    ])
-                    self.train_set = torchvision.datasets.FashionMNIST(root='./data', train=True, download=True,
-                                                                transform=transform_train)
-                elif data_name == "CIFAR10":
-                    transform_train = transforms.Compose([
-                        transforms.RandomCrop(32, padding=4),
-                        transforms.RandomHorizontalFlip(),
-                        transforms.ToTensor(),
-                        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-                    ])
-                    self.train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
-                                                                  transform=transform_train)
-                else:
-                    raise ValueError(f"Data name '{data_name}' is not valid.")
-
-                self.label_to_indices = defaultdict(list)
-                for idx, (_, label) in tqdm(enumerate(self.train_set)):
-                    self.label_to_indices[int(label)].append(idx)
-
             # Load model
             if self.model is None:
-                if 'MNIST' in data_name:
-                    klass = globals()[f'{model_name}_MNIST']
-                else:
+                if model_name != 'Bert':
                     klass = globals()[f'{model_name}_{data_name}']
 
-                if model_name != 'ViT':
-                    full_model = klass()
-                    if cut_layers[1] != 0:
-                        from_layer = cut_layers[0]
-                        to_layer = cut_layers[1]
-                        if to_layer == -1:
-                            self.model = nn.Sequential(*nn.ModuleList(full_model.children())[from_layer:])
-                        else:
-                            self.model = nn.Sequential(*nn.ModuleList(full_model.children())[from_layer:to_layer])
-                    else:
-                        self.model = nn.Sequential(*nn.ModuleList(full_model.children())[:])
-
-                else:
                     if cut_layers[1] != 0:
                         if cut_layers[1] == -1:
                             self.model = klass(start_layer=cut_layers[0])
@@ -127,35 +87,53 @@ class RpcClient:
                             self.model = klass(start_layer=cut_layers[0], end_layer=cut_layers[1])
                     else:
                         self.model = klass()
-                self.model.to(self.device)
+
+                else:
+                    klass = Bert
+                    if self.layer_id == 1:
+                        self.model = klass(layer_id=1 , n_block=cut_layers[1])
+                    else:
+                        self.model = klass(layer_id=2, n_block=12 - cut_layers[0])
+
             batch_size = self.response["batch_size"]
             lr = self.response["lr"]
             momentum = self.response["momentum"]
-            compute_loss = self.response["compute_loss"]
             control_count = self.response["control_count"]
 
             # Read parameters and load to model
             if state_dict:
-                self.model.load_state_dict(state_dict)
-            if self.response["cluster"] is not None and compute_loss["mode"] != 'normal':
-                self.global_model = copy.copy(self.model)
+                if model_name == 'KWT':
+                    state_dict = {k: v for k, v in state_dict.items() if 'ln' not in k and 'layer16' not in k}
+                    self.model.load_state_dict(state_dict, strict=False)
+                else:
+                    self.model.load_state_dict(state_dict)
+
+            if model_name == 'Bert':
+                self.model = get_peft_model(self.model, self.peft_config)
+                if self.layer_id == 2:
+                    for param in self.model.classifier.parameters():
+                        param.requires_grad = True
+
+            self.model.to(self.device)
 
             # Start training
             if self.layer_id == 1:
-                selected_indices = []
-                for label, count in enumerate(self.label_count):
-                    selected_indices.extend(random.sample(self.label_to_indices[label], count))
-
-                subset = torch.utils.data.Subset(self.train_set, selected_indices)
-                train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
+                if self.train_loader is None:
+                    self.train_loader = data_loader(data_name, batch_size, self.label_count, train=True)
                 if cut_layers[1] != 0:
-                    result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=False)
+                    result, size = self.model_train.train_on_first_layer(self.model, lr, momentum, clip_grad_norm, control_count, self.train_loader, self.cluster, config_time=config_time)
                 else:
-                    result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, train_loader, self.cluster, special, alone_train=True)
-            else:
-                result, size = self.train_func(self.model, self.global_model, self.label_count, lr, momentum, clip_grad_norm, compute_loss, num_layers, control_count, None, self.cluster, special)
+                    result, size = self.model_train.alone_training(self.model, lr, momentum, clip_grad_norm, self.cluster)
 
+            elif self.layer_id == num_layers:
+                result, size = self.model_train.train_on_last_layer(self.model, lr, momentum, clip_grad_norm, self.cluster)
+            else:
+                result, size = self.model_train.train_on_middle_layer(self.model, lr, momentum, clip_grad_norm, control_count, self.cluster)
+            
             # Stop training, then send parameters to server
+            if model_name == 'Bert':
+                self.model = self.model.merge_and_unload()
+
             model_state_dict = copy.deepcopy(self.model.state_dict())
             if self.device != "cpu":
                 for key in model_state_dict:
@@ -169,13 +147,8 @@ class RpcClient:
         elif action == "STOP":
             return False
 
-    def connect(self):
-        credentials = pika.PlainCredentials(self.username, self.password)
-        self.connection = pika.BlockingConnection(pika.ConnectionParameters(self.address, 5672, '/', credentials))
-        self.channel = self.connection.channel()
 
     def send_to_server(self, message):
-        self.connect()
         self.response = None
 
         self.channel.queue_declare('rpc_queue', durable=False)

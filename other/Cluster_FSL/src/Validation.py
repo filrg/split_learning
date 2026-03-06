@@ -1,5 +1,4 @@
-import torch
-import torch.nn as nn
+
 import numpy as np
 import math
 from tqdm import tqdm
@@ -17,12 +16,7 @@ def test(model_name, data_name, state_dict_full, logger):
             transforms.Normalize((0.5,), (0.5,))
         ])
         testset = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform_test)
-    elif data_name == "FASHION_MNIST":
-        transform_test = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
-        ])
-        testset = torchvision.datasets.FashionMNIST(root='./data', train=False, download=True, transform=transform_test)
+
     elif data_name == "CIFAR10":
         transform_test = transforms.Compose([
             transforms.ToTensor(),
@@ -34,16 +28,14 @@ def test(model_name, data_name, state_dict_full, logger):
 
     test_loader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
 
-    if 'MNIST' in data_name:
-        klass = globals()[f'{model_name}_MNIST']
-    else:
-        klass = globals()[f'{model_name}_{data_name}']
+
+    klass = globals()[f'{model_name}_{data_name}']
+
     if klass is None:
         raise ValueError(f"Class '{model_name}' does not exist.")
 
     model = klass()
-    if model_name != 'ViT':
-         model = nn.Sequential(*nn.ModuleList(model.children()))
+
     model.load_state_dict(state_dict_full)
     # evaluation mode
     model.eval()
