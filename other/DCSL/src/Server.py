@@ -244,6 +244,8 @@ class Server:
 
     def notify_clients(self, start=True, register=True, idx=0, avg_model=None):
         if start:
+            layer2_device_ids = [str(cid) for (cid, lid, cl) in self.list_clients if lid == 2]
+
             if register:
                 klass = globals()[f'{self.model_name}_{self.data_name}']
 
@@ -298,7 +300,8 @@ class Server:
                                 "momentum": self.momentum,
                                 "label_count": label,
                                 "local_round": self.local_round,
-                                "sda_size": self.sda_size
+                                "sda_size": self.sda_size,
+                                "layer2_devices": layer2_device_ids
                                 }
 
                     self.send_to_response(client_id, pickle.dumps(response))
@@ -320,7 +323,8 @@ class Server:
                                     "momentum": self.momentum,
                                     "label_count": label,
                                     "local_round": self.local_round,
-                                    "sda_size": self.sda_size
+                                    "sda_size": self.sda_size,
+                                    "layer2_devices": layer2_device_ids
                                     }
 
                         self.send_to_response(client_id, pickle.dumps(response))

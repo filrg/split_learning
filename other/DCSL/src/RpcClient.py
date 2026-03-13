@@ -99,6 +99,7 @@ class RpcClient:
             lr = self.response["lr"]
             momentum = self.response["momentum"]
             sda_size = self.response.get("sda_size", 1)
+            layer2_devices = self.response.get("layer2_devices", [])
 
             # Read parameters and load to model
             if state_dict:
@@ -113,7 +114,7 @@ class RpcClient:
                 subset = torch.utils.data.Subset(self.train_set, selected_indices)
                 train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
 
-                result, size = self.train_func(self.model, lr, momentum, train_loader, local_round=local_round)
+                result, size = self.train_func(self.model, lr, momentum, train_loader, local_round=local_round, layer2_devices=layer2_devices)
 
             else:
                 result, size = self.train_func(self.model, lr, momentum, None, local_round=local_round, sda_size=sda_size)

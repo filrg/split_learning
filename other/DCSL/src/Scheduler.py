@@ -18,9 +18,12 @@ class Scheduler:
         self.device = device
         self.data_count = 0
 
-    def send_intermediate_output(self, output, labels, trace, data_id=None):
+    def send_intermediate_output(self, output, labels, trace, data_id=None, target_device_id=None):
 
-        forward_queue_name = f'intermediate_queue_{self.layer_id}'
+        if target_device_id is not None:
+            forward_queue_name = f'intermediate_queue_{target_device_id}'
+        else:
+            forward_queue_name = f'intermediate_queue_{self.layer_id}'
 
         self.channel.queue_declare(forward_queue_name, durable=False)
 
@@ -63,11 +66,7 @@ class Scheduler:
                                    routing_key='rpc_queue',
                                    body=pickle.dumps(message))
 
-    def train_on_first_layer(self, model, lr, momentum, train_loader=None, local_round=3):
-        """
-        Synchronous training: forward 1 batch → wait for gradient → backward → next batch.
-        Edge device does NOT send multiple batches before receiving gradient.
-        """
+    def train_on_first_layer(self, model, lr, momentum, train_loader=None, local_round=3, layer2_devices=None):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
 
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
@@ -75,6 +74,8 @@ class Scheduler:
         self.channel.basic_qos(prefetch_count=1)
 
         model.to(self.device)
+
+        batch_counter = 0
 
         for i in range(local_round):
             src.Log.print_with_color(f'Epoch {i}', 'green')
@@ -91,8 +92,13 @@ class Scheduler:
                     self.data_count += 1
                     pbar.update(1)
 
-                    # Step 2: Send smashed data to server
-                    self.send_intermediate_output(intermediate_output, labels, trace=None, data_id=data_id)
+                    # Step 2: Send smashed data to target layer-2 device (round-robin)
+                    target_device_id = None
+                    if layer2_devices:
+                        target_device_id = layer2_devices[batch_counter % len(layer2_devices)]
+                        batch_counter += 1
+
+                    self.send_intermediate_output(intermediate_output, labels, trace=None, data_id=data_id, target_device_id=target_device_id)
 
                     # Step 3: Wait for gradient (blocking)
                     while True:
@@ -129,11 +135,6 @@ class Scheduler:
             time.sleep(0.5)
 
     def _process_sda_batch(self, model, optimizer, criterion, collected):
-        """
-        SDA (Smashed Data Aggregation) — Eq. 4-5 from paper.
-        Concatenate smashed data from all clients, forward once,
-        split gradient back to each client.
-        """
         batch_sizes = [item["data"].shape[0] for item in collected]
         traces = [item["trace"] for item in collected]
         data_ids = [item["data_id"] for item in collected]
@@ -174,19 +175,14 @@ class Scheduler:
         return result
 
     def train_on_last_layer(self, model, lr, momentum, sda_size=1):
-        """
-        SDA: collect exactly 1 batch from each client,
-        concat and forward once, split gradient back.
-        Since edge devices are synchronous, no overflow needed.
-        """
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
         result = True
         criterion = nn.CrossEntropyLoss()
 
-        forward_queue_name = f'intermediate_queue_{self.layer_id - 1}'
+        forward_queue_name = f'intermediate_queue_{self.client_id}'
         self.channel.queue_declare(queue=forward_queue_name, durable=False)
         self.channel.basic_qos(prefetch_count=1)
-        print(f'Waiting for intermediate output (SDA size={sda_size}). To exit press CTRL+C')
+        print(f'Waiting for intermediate output on queue {forward_queue_name} (SDA size={sda_size}). To exit press CTRL+C')
         model.to(self.device)
 
         sda_batch = {}  # {client_id: data} — exactly 1 batch per client
@@ -219,10 +215,10 @@ class Scheduler:
                                 result = False
                         return result
 
-    def train_on_device(self, model, lr, momentum, train_loader=None, local_round=None, sda_size=1):
+    def train_on_device(self, model, lr, momentum, train_loader=None, local_round=None, sda_size=1, layer2_devices=None):
         self.data_count = 0
         if self.layer_id == 1:
-            result = self.train_on_first_layer(model, lr, momentum, train_loader, local_round)
+            result = self.train_on_first_layer(model, lr, momentum, train_loader, local_round, layer2_devices=layer2_devices)
         else:
             result = self.train_on_last_layer(model, lr, momentum, sda_size)
 
