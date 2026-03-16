@@ -75,13 +75,41 @@ class RpcClient:
                     ])
                     self.train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
                                                                   transform=transform_train)
+                elif data_name == "SPEECHCOMMANDS":
+                    from src.dataset.SPEECHCOMMANDS import SpeechCommandsDataset
+                    self.train_set = SpeechCommandsDataset(root='./data', subset='training')
+                elif data_name == "EMOTION":
+                    from datasets import load_dataset
+                    from transformers import BertTokenizer
+                    from src.dataset.EMOTION import EMOTIONDataset
+                    
+                    dataset = load_dataset('ag_news', download_mode='reuse_dataset_if_exists', cache_dir='./hf_cache')
+                    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+                    
+                    train_data = dataset['train']
+                    texts = train_data['text']
+                    labels = train_data['label']
+                    
+                    self.train_set = EMOTIONDataset(texts, labels, tokenizer, max_length=128)
                 else:
                     self.train_set = None
                     raise ValueError(f"Data name '{data_name}' is not valid.")
 
                 self.label_to_indices = defaultdict(list)
-                for idx, (_, label) in tqdm(enumerate(self.train_set)):
-                    self.label_to_indices[int(label)].append(idx)
+                if data_name == "EMOTION":
+                    for idx, label in enumerate(self.train_set.labels):
+                        self.label_to_indices[int(label)].append(idx)
+                elif data_name == "SPEECHCOMMANDS":
+                    from src.dataset.SPEECHCOMMANDS import CLASSES
+                    for idx, (audio_path, label_name) in enumerate(self.train_set.samples):
+                        if label_name in CLASSES:
+                            label_idx = CLASSES.index(label_name)
+                        else:
+                            label_idx = CLASSES.index('unknown')
+                        self.label_to_indices[label_idx].append(idx)
+                else:
+                    for idx, (_, label) in tqdm(enumerate(self.train_set)):
+                        self.label_to_indices[int(label)].append(idx)
 
             # Load model
             if self.model is None:

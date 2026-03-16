@@ -24,6 +24,17 @@ def test(model_name, data_name, state_dict_full, logger):
             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
         ])
         testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
+    elif data_name == "SPEECHCOMMANDS":
+        from src.dataset.SPEECHCOMMANDS import SpeechCommandsDataset
+        testset = SpeechCommandsDataset(root='./data', subset='testing')
+    elif data_name == "EMOTION":
+        from datasets import load_dataset
+        from transformers import BertTokenizer
+        from src.dataset.EMOTION import EMOTIONDataset, load_test_EMOTION
+        dataset = load_dataset('ag_news', download_mode='reuse_dataset_if_exists', cache_dir='./hf_cache')
+        tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        test_texts, test_labels = load_test_EMOTION(1000, dataset)
+        testset = EMOTIONDataset(test_texts, test_labels, tokenizer, max_length=128)
     else:
         raise ValueError(f"Data name '{data_name}' is not valid.")
 
