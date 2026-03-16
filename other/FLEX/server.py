@@ -17,7 +17,6 @@ username = config["rabbit"]["username"]
 password = config["rabbit"]["password"]
 virtual_host = config["rabbit"]["virtual-host"]
 
-
 def signal_handler(sig, frame):
     print("\nCatch stop signal Ctrl+C. Stop the program.")
     delete_old_queues(address, username, password, virtual_host)
@@ -29,4 +28,4 @@ if __name__ == "__main__":
     delete_old_queues(address, username, password, virtual_host)
     server = Server(config)
     server.start()
-    src.Log.print_with_color("Ok, ready!", "green")
+    src.Log.print_with_color("Ok, ready FLEX-SFL !", "green")

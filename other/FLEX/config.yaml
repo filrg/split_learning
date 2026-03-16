@@ -1,38 +1,28 @@
 name: Split Learning
 server:
-  limited-time:
-    enable: False
-    epoch: 1
-    time: 10 #(seconds)
-
-  global-round: 1
+  global-round : 1
+  t-g: 4 # global
+  t-c: 2 # client
   clients:
     - 9
     - 3
   num-cluster: 3
-  cut-layers:
-    - [6]
-    - [6]
-    - [4]
-  infor-cluster:
-    - [3,1]
-    - [3,1]
-    - [3,1]
+  cut-layer: # VGG16[4,7] , Bert [1,2]
+    - 7
+    - 7
+    - 4
+  select-ratio: 0.5
   model: VGG16
   data-name: CIFAR10
-  parameters:
-    load: True
-    save: True
-  validation: True
   data-distribution:
     non-iid: True
     num-sample: 5000
     num-label: 10
 
 rabbit:
-  address: 192.168.101.91
-  username: dai
-  password: dai
+  address: 127.0.0.1
+  username: admin
+  password: admin
   virtual-host: /
 
 log_path: .
@@ -42,6 +32,3 @@ learning:
   learning-rate: 0.01
   momentum: 0.5
   batch-size: 32
-  control-count: 1
-  clip-grad-norm: 0.0
-

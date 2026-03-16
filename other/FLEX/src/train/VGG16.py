@@ -143,7 +143,7 @@ class Train_VGG16:
                     break
 
         notify_data = {"action": "NOTIFY", "client_id": self.client_id, "layer_id": self.layer_id,
-                        "message": "Finish training!", "cluster": cluster}
+                        "message": "Finish training!"}
 
         # Finish epoch training, send notify to server
         src.Log.print_with_color("[>>>] Finish training!", "red")
@@ -156,7 +156,7 @@ class Train_VGG16:
                 received_data = pickle.loads(body)
                 src.Log.print_with_color(f"[<<<] Received message from server {received_data}", "blue")
                 if received_data["action"] == "PAUSE":
-                    return True , self.data_count
+                    return True , self.data_count, received_data["send"]
             time.sleep(0.5)
 
     def train_on_last_layer(self, model, lr, momentum, clip_grad_norm, cluster):
@@ -212,104 +212,5 @@ class Train_VGG16:
                     received_data = pickle.loads(body)
                     src.Log.print_with_color(f"[<<<] Received message from server {received_data}", "blue")
                     if received_data["action"] == "PAUSE":
-                        return result, self.data_count
-
-    def train_on_middle_layer(self, model, lr, momentum, clip_grad_norm, control_count=5, cluster=None):
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
-
-        forward_queue_name = f'intermediate_queue_{self.layer_id - 1}'
-        backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
-        self.channel.queue_declare(queue=forward_queue_name, durable=False)
-        self.channel.queue_declare(queue=backward_queue_name, durable=False)
-        self.channel.basic_qos(prefetch_count=1)
-        data_store = {}
-        print('Waiting for intermediate output. To exit press CTRL+C')
-        model.to(self.device)
-        while True:
-            # Training model
-            model.train()
-            optimizer.zero_grad()
-            # Process gradient
-            method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
-            if method_frame and body:
-                received_data = pickle.loads(body)
-                gradient_numpy = received_data["data"]
-                gradient = torch.tensor(gradient_numpy).to(self.device)
-                trace = received_data["trace"]
-                data_id = received_data["data_id"]
-
-                data_input = data_store.pop(data_id)
-                output = model(data_input)
-                data_input.retain_grad()
-                output.backward(gradient=gradient, retain_graph=True)
-                optimizer.step()
-
-                gradient = data_input.grad
-                self.send_gradient(data_id, gradient, trace)
-            else:
-                method_frame, header_frame, body = self.channel.basic_get(queue=forward_queue_name, auto_ack=True)
-                if method_frame and body:
-                    received_data = pickle.loads(body)
-                    intermediate_output_numpy = received_data["data"]
-                    trace = received_data["trace"]
-                    data_id = received_data["data_id"]
-                    test = received_data["test"]
-                    labels = received_data["label"].to(self.device)
-
-                    intermediate_output = torch.tensor(intermediate_output_numpy, requires_grad=True).to(self.device)
-                    data_store[data_id] = intermediate_output
-
-                    output = model(intermediate_output)
-                    output = output.detach().requires_grad_(True)
-
-                    self.data_count += 1
-                    self.send_intermediate_output(data_id, output, labels, trace, test, cluster=cluster)
-                    # speed control
-                    if len(data_store) > control_count:
-                        continue
-            # Check training process
-            if method_frame is None:
-                broadcast_queue_name = f'reply_{self.client_id}'
-                method_frame, header_frame, body = self.channel.basic_get(queue=broadcast_queue_name, auto_ack=True)
-                if body:
-                    received_data = pickle.loads(body)
-                    src.Log.print_with_color(f"[<<<] Received message from server {received_data}", "blue")
-                    if received_data["action"] == "PAUSE":
-                        return True, self.data_count
-
-    def alone_training(self, model, lr, momentum, clip_grad_norm, train_loader=None, cluster=None):
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
-        criterion = nn.CrossEntropyLoss()
-        print('Waiting for training. To exit press CTRL+C')
-        for training_data, labels in tqdm(train_loader):
-            model.train()
-            optimizer.zero_grad()
-            training_data = training_data.to(self.device)
-            labels = labels.to(self.device)
-            output = model(training_data)
-
-
-            loss = criterion(output, labels)
-            if torch.isnan(loss).any():
-                src.Log.print_with_color("NaN detected in loss", "yellow")
-                result = False
-            loss.backward()
-            if clip_grad_norm and clip_grad_norm > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), clip_grad_norm)
-            optimizer.step()
-            self.data_count += 1
-
-        notify_data = {"action": "NOTIFY", "client_id": self.client_id, "layer_id": self.layer_id,
-                       "message": "Finish training!", "cluster": cluster}
-        src.Log.print_with_color("[>>>] Finish training!", "red")
-        self.send_to_server(notify_data)
-
-        broadcast_queue_name = f'reply_{self.client_id}'
-        while True:  # Wait for broadcast
-            method_frame, header_frame, body = self.channel.basic_get(queue=broadcast_queue_name, auto_ack=True)
-            if body:
-                received_data = pickle.loads(body)
-                src.Log.print_with_color(f"[<<<] Received message from server {received_data}", "blue")
-                if received_data["action"] == "PAUSE":
-                    return True, self.data_count
-            time.sleep(0.5)
+                        return result, self.data_count, received_data["send"]
+                time.sleep(0.5)

@@ -163,11 +163,11 @@ class BertClassifier(nn.Module):
         logits = self.classifier(pooled_output)
         return logits
 
-class Bert(nn.Module):
+class Bert_AGNEWS(nn.Module):
     def __init__( self, vocab_size=28996, hidden_size=768, num_attention_heads=12, intermediate_size=3072,
         max_position_embeddings=512, type_vocab_size=2, dropout_prob=0.1, layer_id=0, n_block=12
     ):
-        super(Bert, self).__init__()
+        super(Bert_AGNEWS, self).__init__()
         self.layer_id = layer_id
         self.config = DotDict(
             model_type="bert",
