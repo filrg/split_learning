@@ -8,7 +8,8 @@ import src.Log
 import src.Utils
 import torch
 
-from src.model.Bert_AGNEWS import Bert
+from src.model.Bert_AGNEWS import Bert_AGNEWS
+from src.model.KWT_SPEECHCOMMANDS import KWT_SPEECHCOMMANDS
 from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
 from src.val.get_val import get_val
 
@@ -35,6 +36,7 @@ class Server:
         self.data_distribution = config["server"]["data-distribution"]
 
         # Data distribution
+        self.non_iid = self.data_distribution["non-iid"]
         self.num_label = self.data_distribution["num-label"]
         self.num_sample = self.data_distribution["num-sample"]
         self.label_counts = None
@@ -74,28 +76,32 @@ class Server:
         src.Log.print_with_color(f"Application start. Server is waiting for {self.total_clients} clients.", "green")
 
     def distribution(self):
-        # Bert
-        # label_distribution = np.array([
-        #     [0.25, 0.25, 0.25, 0.25],
-        #     [0.25, 0.25, 0.25, 0.25],
-        #     [0.25, 0.25, 0.25, 0.25],
-        #     [0.25, 0.25, 0.25, 0.25]]
-        # )
-        # VGG16
-        label_distribution = np.array([
-                                    [0.1376, 0.0589, 0.2163, 0.2322, 0.0163, 0.0417, 0.1706, 0.0845, 0.0300, 0.0128],
-                                    [0.0036, 0.0046, 0.1981, 0.0632, 0.1970, 0.1301, 0.1275, 0.0384, 0.2076, 0.0288],
-                                    [0.2172, 0.0002, 0.0328, 0.0597, 0.0733, 0.2204, 0.0000, 0.3430, 0.0489, 0.0050],
-                                    [0.0404, 0.2284, 0.1779, 0.0074, 0.0567, 0.0257, 0.0263, 0.0237, 0.1306, 0.2830],
-                                    [0.0142, 0.0838, 0.0240, 0.1238, 0.0046, 0.3854, 0.0094, 0.1984, 0.0868, 0.0690],
-                                    [0.1417, 0.0446, 0.0137, 0.2550, 0.0164, 0.0559, 0.0004, 0.0666, 0.3834, 0.0247],
-                                    [0.0038, 0.1174, 0.3174, 0.1164, 0.1699, 0.0587, 0.1382, 0.0747, 0.0032, 0.0000],
-                                    [0.1713, 0.1041, 0.0189, 0.0213, 0.0000, 0.1449, 0.2591, 0.1255, 0.1427, 0.0070],
-                                    [0.0004, 0.0171, 0.0764, 0.0000, 0.0762, 0.1191, 0.1538, 0.1362, 0.0002, 0.4206]
-                                    ])
-        # SPEEDCOMMANDS
+        if self.non_iid:
+            # Bert
+            # label_distribution = np.array([
+            #     [0.25, 0.25, 0.25, 0.25],
+            #     [0.25, 0.25, 0.25, 0.25],
+            #     [0.25, 0.25, 0.25, 0.25],
+            #     [0.25, 0.25, 0.25, 0.25]]
+            # )
 
-        self.label_counts = (label_distribution * self.num_sample).astype(int)
+            # VGG16
+            label_distribution = np.array([
+                [0.1376, 0.0589, 0.2163, 0.2322, 0.0163, 0.0417, 0.1706, 0.0845, 0.0300, 0.0128],
+                [0.0036, 0.0046, 0.1981, 0.0632, 0.1970, 0.1301, 0.1275, 0.0384, 0.2076, 0.0288],
+                [0.2172, 0.0002, 0.0328, 0.0597, 0.0733, 0.2204, 0.0000, 0.3430, 0.0489, 0.0050],
+                [0.0404, 0.2284, 0.1779, 0.0074, 0.0567, 0.0257, 0.0263, 0.0237, 0.1306, 0.2830],
+                [0.0142, 0.0838, 0.0240, 0.1238, 0.0046, 0.3854, 0.0094, 0.1984, 0.0868, 0.0690],
+                [0.1417, 0.0446, 0.0137, 0.2550, 0.0164, 0.0559, 0.0004, 0.0666, 0.3834, 0.0247],
+                [0.0038, 0.1174, 0.3174, 0.1164, 0.1699, 0.0587, 0.1382, 0.0747, 0.0032, 0.0000],
+                [0.1713, 0.1041, 0.0189, 0.0213, 0.0000, 0.1449, 0.2591, 0.1255, 0.1427, 0.0070],
+                [0.0004, 0.0171, 0.0764, 0.0000, 0.0762, 0.1191, 0.1538, 0.1362, 0.0002, 0.4206]
+            ])
+
+            # SPEEDCOMMANDS
+            self.label_counts = (label_distribution * self.num_sample).astype(int)
+        else:
+            self.label_counts = np.full((self.total_clients[0], self.num_label), self.num_sample // self.num_label)
 
     def on_request(self, ch, method, props, body):
         message = pickle.loads(body)
@@ -124,7 +130,7 @@ class Server:
                 src.Log.print_with_color(f'List cut point: {self.cut_layer}', 'yellow')
                 src.Log.print_with_color(f'Infor clusters: {self.infor_cluster}', 'yellow')
 
-                self.logger.log_info(f"Start training global round {self.t_g - self.round + 1}")
+                self.logger.log_info(f"Start training global round {self.round}")
                 self.notify_clients()
 
         elif action == "NOTIFY":
@@ -148,8 +154,8 @@ class Server:
         elif action == "UPDATE":
             data_message = message["message"]
             result = message["result"]
-            src.Log.print_with_color(f"[<<<] Received message from {client_id}: {data_message}", "blue")
             cluster = message["cluster"]
+            src.Log.print_with_color(f"[<<<] Received message from {client_id}: {data_message}, cluster: {cluster}", "blue")
 
             self.current_clients[layer_id - 1] += 1
             if not result:
@@ -170,12 +176,14 @@ class Server:
                 src.Log.print_with_color("Collected all parameters.", "yellow")
                 if self.round_result:
                     if self.round % self.t_c == 0:
-                        state_dict = src.Utils.fedavg_state_dicts(self.clients_params[cluster], self.clients_sizes[cluster])
-                        self.clients_avg[cluster] = state_dict
+
+                        for idx in range(self.num_cluster):
+                            src.Log.print_with_color(f"Avg client params cluster {idx}", "yellow")
+                            state_dict = src.Utils.fedavg_state_dicts(self.clients_params[idx], self.clients_sizes[idx])
+                            self.clients_avg[idx] = state_dict
 
                     if self.round % self.t_g == 0:
-                        for i in range(self.num_cluster):
-                            self.concatenate()
+                        self.concatenate()
 
                         if not get_val(self.model_name, self.data_name, self.full_state_dict, self.logger):
                             self.logger.log_warning("Validation failed!")
@@ -189,8 +197,8 @@ class Server:
                     self.clients_params = [[] for _ in range(self.num_cluster)]
                     self.clients_sizes = [[] for _ in range(self.num_cluster)]
 
-                    self.edges_params = []
-                    self.edges_sizes = []
+                    self.edges_params = [None for _ in range(self.num_cluster)]
+                    self.edges_sizes = [None for _ in range(self.num_cluster)]
 
                 else:
                     self.round = self.global_round + 1
@@ -203,6 +211,7 @@ class Server:
                     if self.round % self.t_g == 0:
                         self.notify_clients()
                     elif self.round % self.t_c == 0:
+
                         self.notify_clients(subround=True,update=True)
                     else:
                         self.notify_clients(subround=True,update=False)
@@ -228,7 +237,7 @@ class Server:
                     if os.path.exists(filepath):
                         self.full_state_dict = torch.load(filepath, weights_only=True)
 
-                        if self.model_name != 'Bert':
+                        if self.model_name == 'VGG16':
                             klass = VGG16_CIFAR10
                             if layer_id == 1:
                                 model = klass(end_layer=self.cut_layer[cluster])
@@ -239,9 +248,19 @@ class Server:
 
                             for key in keys:
                                 state_dict[key] = self.full_state_dict[key]
+                        elif self.model_name == "KWT":
+                            klass = KWT_SPEECHCOMMANDS
+                            if layer_id == 1:
+                                model = klass(end_layer=self.cut_layer[cluster])
+                            else:
+                                model = klass(start_layer=self.cut_layer[cluster])
+                            state_dict = model.state_dict()
+                            keys = state_dict.keys()
 
+                            for key in keys:
+                                state_dict[key] = self.full_state_dict[key]
                         else:
-                            klass = Bert
+                            klass = Bert_AGNEWS
                             if layer_id == 1:
                                 model = klass(layer_id=1, n_block=self.cut_layer[cluster])
                                 state_dict = model.state_dict()

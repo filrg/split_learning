@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-from src.model.Bert_EMOTION import Bert
+from src.model.Bert_AGNEWS import Bert_AGNEWS
 from src.dataset.dataloader import data_loader
 
 def val_Bert(data_name, state_dict_full, logger):
@@ -10,7 +10,7 @@ def val_Bert(data_name, state_dict_full, logger):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     test_loader = data_loader(data_name=data_name,train=False)
-    model = Bert()
+    model = Bert_AGNEWS()
     model = model.to(device)
     model.load_state_dict(state_dict_full)
 

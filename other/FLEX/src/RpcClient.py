@@ -3,10 +3,12 @@ import pickle
 import copy
 
 import src.Log
-from src.model.Bert_AGNEWS import Bert
+from src.model.Bert_AGNEWS import Bert_AGNEWS
 from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
+from src.model.KWT_SPEECHCOMMANDS import KWT_SPEECHCOMMANDS
 from src.train.VGG16 import Train_VGG16
 from src.train.Bert import Train_Bert
+from src.train.KWT import Train_KWT
 from src.dataset.dataloader import data_loader
 
 from peft import LoraConfig, TaskType, get_peft_model
@@ -45,7 +47,7 @@ class RpcClient:
         if action == "START":
             model_name = self.response["model_name"]
             cut_layer = self.response['cut_layer']
-            label_count = self.response['label_count']
+            self.label_count = self.response['label_count']
             data_name = self.response["data_name"]
             self.cluster = self.response['cluster']
 
@@ -60,7 +62,7 @@ class RpcClient:
                     target_modules=["query", "key", "value", "dense"]
                 )
             else:
-                self.model_train = Train_VGG16(self.client_id, self.layer_id, self.channel, self.device)
+                self.model_train = Train_KWT(self.client_id, self.layer_id, self.channel, self.device)
 
             if self.label_count is not None:
                 src.Log.print_with_color(f"Label distribution of client: {self.label_count}", "yellow")
@@ -68,21 +70,26 @@ class RpcClient:
             # Load model
             if self.model is None:
                 if model_name != 'Bert':
-                    klass = VGG16_CIFAR10
+                    if model_name == 'VGG16':
+                        klass = VGG16_CIFAR10
+                    else:
+                        klass = KWT_SPEECHCOMMANDS
+
                     if self.layer_id == 1:
                         self.model = klass(end_layer=cut_layer)
                     else:
                         self.model = klass(start_layer=cut_layer)
                 else:
-                    klass = Bert
+                    klass = Bert_AGNEWS
                     if self.layer_id == 1:
                         self.model = klass(layer_id=1, n_block=cut_layer)
                     else:
                         self.model = klass(layer_id=2, n_block=12 - cut_layer)
 
-            batch_size = self.response["batch_size"]
-            lr = self.response["lr"]
-            momentum = self.response["momentum"]
+            learning = self.response["learning"]
+            batch_size = learning["batch-size"]
+            lr = learning["learning-rate"]
+            momentum = learning["momentum"]
 
             if state_dict is not None:
                 self.model.load_state_dict(state_dict)

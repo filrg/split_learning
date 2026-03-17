@@ -28,4 +28,3 @@ if __name__ == "__main__":
     delete_old_queues(address, username, password, virtual_host)
     server = Server(config)
     server.start()
-    src.Log.print_with_color("Ok, ready FLEX-SFL !", "green")
