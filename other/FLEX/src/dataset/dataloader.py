@@ -121,9 +121,8 @@ def SPEECHCOMMANDS(batch_size=None, distribution=None, train=True):
         return train_loader
     else:
         dataset = SpeechCommandsDataset(root='./data', subset='testing')
-        test_loader = DataLoader(dataset, batch_size=100, shuffle=False)
+        test_loader = DataLoader(dataset, batch_size=20, shuffle=False)
         return test_loader
-
 
 def data_loader(data_name=None, batch_size=None, distribution=None, train=True):
     if data_name == 'AGNEWS':
