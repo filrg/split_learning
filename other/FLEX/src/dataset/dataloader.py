@@ -19,7 +19,7 @@ def AGNEWS(batch_size=None, distribution=None, train=True):
         download_mode='reuse_dataset_if_exists',
         cache_dir='./hf_cache'
     )
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+    tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
 
     if train:
         train_data = dataset['train']

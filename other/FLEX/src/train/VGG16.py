@@ -59,8 +59,8 @@ class Train_VGG16:
                                    routing_key='rpc_queue',
                                    body=pickle.dumps(message))
 
-    def train_on_first_layer(self, model, lr, momentum, train_loader=None, cluster=None):
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+    def train_on_first_layer(self, model, learning, train_loader=None, cluster=None):
+        optimizer = optim.SGD(model.parameters(), lr=learning["learning-rate"], momentum=learning["momentum"])
 
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
         self.channel.queue_declare(queue=backward_queue_name, durable=False)
@@ -110,8 +110,8 @@ class Train_VGG16:
                     return True , self.data_count, received_data["send"]
             time.sleep(0.5)
 
-    def train_on_last_layer(self, model, lr, momentum, cluster):
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+    def train_on_last_layer(self, model, learning, cluster):
+        optimizer = optim.SGD(model.parameters(), lr=learning["learning-rate"], momentum=learning["momentum"])
         result = True
 
         criterion = nn.CrossEntropyLoss()

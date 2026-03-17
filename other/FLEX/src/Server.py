@@ -268,18 +268,18 @@ class Server:
 
                                 for key in keys:
                                     state_dict[key] = self.full_state_dict[key]
-                                else:
-                                    model = klass(layer_id=2, n_block=12 - self.cut_layer[cluster])
-                                    state_dict = model.state_dict()
-                                    state_dict = src.Utils.change_keys(state_dict, self.cut_layer[cluster], True)
-                                    keys = state_dict.keys()
+                            else:
+                                model = klass(layer_id=2, n_block=12 - self.cut_layer[cluster])
+                                state_dict = model.state_dict()
+                                state_dict = src.Utils.change_keys(state_dict, self.cut_layer[cluster], True)
+                                keys = state_dict.keys()
 
-                                    for key in keys:
-                                        state_dict[key] = self.full_state_dict[key]
+                                for key in keys:
+                                    state_dict[key] = self.full_state_dict[key]
 
-                                    state_dict = src.Utils.change_keys(state_dict, self.cut_layer[cluster], False)
+                                state_dict = src.Utils.change_keys(state_dict, self.cut_layer[cluster], False)
 
-                                src.Log.print_with_color(f"Load pretrain model Bert successfully", "green")
+                            src.Log.print_with_color(f"Load pretrain model Bert successfully", "green")
                     else:
                         self.logger.log_info(f"File {filepath} does not exist.")
 

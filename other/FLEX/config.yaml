@@ -29,6 +29,7 @@ log_path: .
 debug_mode: True
 
 learning:
-  learning-rate: 0.01
+  learning-rate: 0.00001
   momentum: 0.5
   batch-size: 32
+  weight-decay: 0.01

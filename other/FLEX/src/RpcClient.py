@@ -88,8 +88,6 @@ class RpcClient:
 
             learning = self.response["learning"]
             batch_size = learning["batch-size"]
-            lr = learning["learning-rate"]
-            momentum = learning["momentum"]
 
             if state_dict is not None:
                 self.model.load_state_dict(state_dict)
@@ -106,10 +104,10 @@ class RpcClient:
                 if self.train_loader is None:
                     self.train_loader = data_loader(data_name, batch_size, self.label_count, train=True)
 
-                result, size, send = self.model_train.train_on_first_layer(self.model, lr, momentum,self.train_loader, self.cluster)
+                result, size, send = self.model_train.train_on_first_layer(self.model, learning ,self.train_loader, self.cluster)
 
             else:
-                result, size, send = self.model_train.train_on_last_layer(self.model, lr, momentum, self.cluster)
+                result, size, send = self.model_train.train_on_last_layer(self.model, learning, self.cluster)
 
             if model_name == 'Bert':
                 self.model = self.model.merge_and_unload()

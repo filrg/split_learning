@@ -3,7 +3,6 @@ import sys
 import signal
 from src.Server import Server
 from src.Utils import delete_old_queues
-import src.Log
 import yaml
 
 parser = argparse.ArgumentParser(description="Split learning framework with controller.")
