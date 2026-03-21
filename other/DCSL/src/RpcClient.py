@@ -11,6 +11,8 @@ from tqdm import tqdm
 import src.Log
 from src.model import *
 
+from peft import LoraConfig, get_peft_model
+
 
 class RpcClient:
     def __init__(self, client_id, layer_id, channel, train_func, device):
@@ -23,6 +25,7 @@ class RpcClient:
         self.response = None
         self.model = None
         self.label_count = None
+        self.peft_config = None
 
         self.train_set = None
         self.label_to_indices = None
@@ -78,25 +81,25 @@ class RpcClient:
                 elif data_name == "SPEECHCOMMANDS":
                     from src.dataset.SPEECHCOMMANDS import SpeechCommandsDataset
                     self.train_set = SpeechCommandsDataset(root='./data', subset='training')
-                elif data_name == "EMOTION":
+                elif data_name == "AGNEWS":
                     from datasets import load_dataset
                     from transformers import BertTokenizer
-                    from src.dataset.EMOTION import EMOTIONDataset
+                    from src.dataset.AGNEWS import AGNEWS_DATASET
                     
                     dataset = load_dataset('ag_news', download_mode='reuse_dataset_if_exists', cache_dir='./hf_cache')
-                    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+                    tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
                     
                     train_data = dataset['train']
                     texts = train_data['text']
                     labels = train_data['label']
                     
-                    self.train_set = EMOTIONDataset(texts, labels, tokenizer, max_length=128)
+                    self.train_set = AGNEWS_DATASET(texts, labels, tokenizer, max_length=128)
                 else:
                     self.train_set = None
                     raise ValueError(f"Data name '{data_name}' is not valid.")
 
                 self.label_to_indices = defaultdict(list)
-                if data_name == "EMOTION":
+                if data_name == "AGNEWS":
                     for idx, label in enumerate(self.train_set.labels):
                         self.label_to_indices[int(label)].append(idx)
                 elif data_name == "SPEECHCOMMANDS":
@@ -133,6 +136,22 @@ class RpcClient:
             if state_dict:
                 self.model.load_state_dict(state_dict)
 
+            # Apply LoRA for BERT model
+            if model_name == 'BERT':
+                if self.peft_config is None:
+                    self.peft_config = LoraConfig(
+                        task_type="SEQ_CLS",
+                        r=8, lora_alpha=16, lora_dropout=0.1,
+                        bias="none",
+                        target_modules=["query", "key", "value", "dense"]
+                    )
+                self.model = get_peft_model(self.model, self.peft_config)
+                if self.layer_id == 2:
+                    for param in self.model.layer15.parameters():
+                        param.requires_grad = True
+
+            self.model.to(self.device)
+
             # Start training
             if self.layer_id == 1:
                 selected_indices = []
@@ -142,10 +161,14 @@ class RpcClient:
                 subset = torch.utils.data.Subset(self.train_set, selected_indices)
                 train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
 
-                result, size = self.train_func(self.model, lr, momentum, train_loader, local_round=local_round, layer2_devices=layer2_devices)
+                result, size = self.train_func(self.model, lr, momentum, train_loader, local_round=local_round, layer2_devices=layer2_devices, model_name=model_name)
 
             else:
-                result, size = self.train_func(self.model, lr, momentum, None, local_round=local_round, sda_size=sda_size)
+                result, size = self.train_func(self.model, lr, momentum, None, local_round=local_round, sda_size=sda_size, model_name=model_name)
+
+            # Merge LoRA weights back for BERT
+            if model_name == 'BERT':
+                self.model = self.model.merge_and_unload()
 
             # Stop training, then send parameters to server
             model_state_dict = copy.deepcopy(self.model.state_dict())

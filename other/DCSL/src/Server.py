@@ -227,7 +227,7 @@ class Server:
                     if self.validation and self.round_result:
                         state_dict_full =  self.concatenate_and_avg_clusters()
                         self.avg_state_dict = []
-                        if not src.Validation.test(self.model_name, self.data_name, state_dict_full, self.logger):
+                        if not src.Validation.test(self.model_name, self.data_name, state_dict_full, self.logger, self.connection):
                             self.logger.log_warning("Training failed!")
                         else:
                             torch.save(state_dict_full, f'{self.model_name}_{self.data_name}.pth')
@@ -239,9 +239,6 @@ class Server:
 
                     if self.round > 0:
                         current_round = self.global_round - self.round + 1
-                        # Step decay: reduce LR by lr_decay every lr_step rounds
-                        num_decays = current_round // self.lr_step
-                        self.current_lr = self.lr * (self.lr_decay ** num_decays)
                         self.logger.log_info(f"Start training round {current_round}")
                         self.logger.log_info(f"Learning rate: {self.current_lr}")
                         self.label_ = copy.deepcopy(self.label_counts)
@@ -288,7 +285,30 @@ class Server:
                         keys = state_dict.keys()
 
                         for key in keys:
-                            state_dict[key] = full_state_dict[key]
+                            if key in full_state_dict:
+                                state_dict[key] = full_state_dict[key]
+                            elif self.model_name == 'BERT':
+                                flex_key = key
+                                if key.startswith('layer1.'):
+                                    flex_key = key.replace('layer1.', 'embeddings.')
+                                elif key.startswith('layer14.'):
+                                    flex_key = key.replace('layer14.', 'pooler.')
+                                elif key.startswith('layer15.1.'):
+                                    flex_key = key.replace('layer15.1.', 'classifier.')
+                                else:
+                                    import re
+                                    match = re.match(r'layer(\d+)\.(.*)', key)
+                                    if match:
+                                        layer_idx = int(match.group(1))
+                                        if 2 <= layer_idx <= 13:
+                                            flex_key = f'layers.{layer_idx - 2}.{match.group(2)}'
+                                
+                                if flex_key in full_state_dict:
+                                    state_dict[key] = full_state_dict[flex_key]
+                                else:
+                                    raise KeyError(f"{key} (mapped to {flex_key}) not found in weight file.")
+                            else:
+                                state_dict[key] = full_state_dict[key]
                         self.logger.log_info("Model loaded successfully.")
                     else:
                         self.logger.log_info(f"File {filepath} does not exist.")

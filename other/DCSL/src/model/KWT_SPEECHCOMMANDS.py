@@ -27,9 +27,7 @@ class TransformerEncoderBlock(nn.Module):
 
 class KWT_SPEECHCOMMANDS(nn.Module):
     """
-    Keyword Transformer (KWT-1) for Speech Commands - Split Learning version
     KWT-1: dim=64, mlp_dim=256, heads=1, layers=12
-    
     Layers:
         1: Linear embedding (n_mfcc -> embed_dim)
         2: CLS token concatenation
@@ -42,12 +40,10 @@ class KWT_SPEECHCOMMANDS(nn.Module):
     def __init__(self, start_layer=0, end_layer=17):
         super().__init__()
         self.start_layer = start_layer
-        # Handle -1 as "all remaining layers"
         self.end_layer = 17 if end_layer == -1 else end_layer
         
-        # KWT-1 config (matches Colab)
         n_mfcc = 40
-        time_steps = 98  # (16000 - 480) / 160 + 1 ≈ 98
+        time_steps = 98
         embed_dim = 64
         num_heads = 1
         mlp_dim = 256
@@ -91,17 +87,16 @@ class KWT_SPEECHCOMMANDS(nn.Module):
             nn.init.trunc_normal_(self.pos_embed, std=0.02)
 
     def forward(self, x):
-        # Input x shape: (batch, n_mfcc, time_steps)
         
         # Layer 1: Linear embedding
         if self.start_layer < 1 <= self.end_layer:
-            x = x.transpose(1, 2)  # (batch, time_steps, n_mfcc)
-            x = self.layer1(x)     # (batch, time_steps, embed_dim)
+            x = x.transpose(1, 2) 
+            x = self.layer1(x)     
         
         # Layer 2: CLS token
         if self.start_layer < 2 <= self.end_layer:
             cls_token = self.cls_token.expand(x.size(0), -1, -1)
-            x = torch.cat([cls_token, x], dim=1)  # (batch, time_steps+1, embed_dim)
+            x = torch.cat([cls_token, x], dim=1)
         
         # Layer 3: Positional embedding + Dropout
         if self.start_layer < 3 <= self.end_layer:

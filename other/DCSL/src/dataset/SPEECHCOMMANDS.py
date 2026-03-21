@@ -6,7 +6,6 @@ from torch.utils.data import Dataset
 from scipy.io import wavfile
 from scipy.fftpack import dct
 
-# 12 classes standard (10 keywords + silence + unknown)
 CLASSES = ['yes', 'no', 'up', 'down', 'left', 'right', 'on', 'off', 'stop', 'go', 'silence', 'unknown']
 
 def compute_mfcc(waveform, sample_rate=16000, n_mfcc=40, n_fft=480, hop_length=160, n_mels=40):
@@ -87,13 +86,6 @@ class SpeechCommandsDataset(Dataset):
     """Google Speech Commands V2 dataset with MFCC features for KWT model"""
     
     def __init__(self, root='./data', subset='training', n_silence=2300):
-        """
-        Args:
-            root: Data directory
-            subset: 'training', 'validation', or 'testing'
-            n_silence: Number of silence samples to generate (training).
-                       For val/test, uses n_silence // 9 (~260).
-        """
         self.root = os.path.join(root, 'SpeechCommands', 'speech_commands_v0.02')
         self.subset = subset
         self.samples = []       # list of (path_or_None, label_str)

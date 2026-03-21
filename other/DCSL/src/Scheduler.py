@@ -66,8 +66,11 @@ class Scheduler:
                                    routing_key='rpc_queue',
                                    body=pickle.dumps(message))
 
-    def train_on_first_layer(self, model, lr, momentum, train_loader=None, local_round=3, layer2_devices=None):
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+    def train_on_first_layer(self, model, lr, momentum, train_loader=None, local_round=3, layer2_devices=None, model_name=None):
+        if model_name == 'BERT':
+            optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+        else:
+            optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
 
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
         self.channel.queue_declare(queue=backward_queue_name, durable=False)
@@ -81,18 +84,29 @@ class Scheduler:
             src.Log.print_with_color(f'Epoch {i}', 'green')
 
             with tqdm(total=len(train_loader), desc="Processing", unit="step") as pbar:
-                for training_data, labels in train_loader:
-                    training_data = training_data.to(self.device)
+                for batch in train_loader:
+                    if isinstance(batch, dict) and 'input_ids' in batch:
+                        training_data = batch['input_ids'].to(self.device)
+                        attention_mask = batch['attention_mask'].to(self.device)
+                        labels = batch['labels'].to(self.device)
+                        kwargs = {'input_ids': training_data, 'attention_mask': attention_mask}
+                    else:
+                        training_data, labels = batch
+                        training_data = training_data.to(self.device)
+                        labels = labels.to(self.device)
+                        kwargs = {}
 
-                    # Step 1: Forward
                     data_id = str(uuid.uuid4())
-                    intermediate_output = model(training_data)
+                    with torch.no_grad():
+                        if 'input_ids' in kwargs:
+                            intermediate_output = model(**kwargs)
+                        else:
+                            intermediate_output = model(training_data, **kwargs)
                     intermediate_output = intermediate_output.detach().requires_grad_(True)
 
                     self.data_count += 1
                     pbar.update(1)
 
-                    # Step 2: Send smashed data to target layer-2 device (round-robin)
                     target_device_id = None
                     if layer2_devices:
                         target_device_id = layer2_devices[batch_counter % len(layer2_devices)]
@@ -100,7 +114,6 @@ class Scheduler:
 
                     self.send_intermediate_output(intermediate_output, labels, trace=None, data_id=data_id, target_device_id=target_device_id)
 
-                    # Step 3: Wait for gradient (blocking)
                     while True:
                         method_frame, header_frame, body = self.channel.basic_get(
                             queue=backward_queue_name, auto_ack=True)
@@ -108,10 +121,12 @@ class Scheduler:
                             received_data = pickle.loads(body)
                             gradient = torch.tensor(received_data["data"]).to(self.device)
 
-                            # Step 4: Backward
                             model.train()
                             optimizer.zero_grad()
-                            output = model(training_data)
+                            if 'input_ids' in kwargs:
+                                output = model(**kwargs)
+                            else:
+                                output = model(training_data, **kwargs)
                             output.backward(gradient=gradient)
                             optimizer.step()
                             break
@@ -134,12 +149,11 @@ class Scheduler:
                     return True
             time.sleep(0.5)
 
-    def _process_sda_batch(self, model, optimizer, criterion, collected):
+    def _process_sda_batch(self, model, optimizer, criterion, collected, model_name=None):
         batch_sizes = [item["data"].shape[0] for item in collected]
         traces = [item["trace"] for item in collected]
         data_ids = [item["data_id"] for item in collected]
 
-        # Eq. 4: S_c = concat(σ_1, σ_2, ..., σ_|D_c|)
         all_data = np.concatenate([item["data"] for item in collected], axis=0)
         all_labels = np.concatenate([item["label"] for item in collected], axis=0)
 
@@ -150,8 +164,10 @@ class Scheduler:
         optimizer.zero_grad()
         concat_intermediate.retain_grad()
 
-        # Eq. 5: ŷ = f(S_c | W)
-        output = model(concat_intermediate)
+        if model_name == 'BERT':
+            output = model(input_ids=concat_intermediate)
+        else:
+            output = model(concat_intermediate)
         loss = criterion(output, concat_labels.long())
         print(f"Loss (SDA, {len(collected)} clients, {sum(batch_sizes)} samples): {loss.item():.4f}")
 
@@ -174,8 +190,11 @@ class Scheduler:
 
         return result
 
-    def train_on_last_layer(self, model, lr, momentum, sda_size=1):
-        optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+    def train_on_last_layer(self, model, lr, momentum, sda_size=1, model_name=None):
+        if model_name == 'BERT':
+            optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+        else:
+            optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
         result = True
         criterion = nn.CrossEntropyLoss()
 
@@ -196,7 +215,7 @@ class Scheduler:
 
                 # When we have 1 batch from each client → SDA forward
                 if len(sda_batch) >= sda_size:
-                    batch_result = self._process_sda_batch(model, optimizer, criterion, list(sda_batch.values()))
+                    batch_result = self._process_sda_batch(model, optimizer, criterion, list(sda_batch.values()), model_name=model_name)
                     if not batch_result:
                         result = False
                     sda_batch = {}
@@ -210,16 +229,16 @@ class Scheduler:
                     if received_data["action"] == "PAUSE":
                         # Process remaining
                         if sda_batch:
-                            batch_result = self._process_sda_batch(model, optimizer, criterion, list(sda_batch.values()))
+                            batch_result = self._process_sda_batch(model, optimizer, criterion, list(sda_batch.values()), model_name=model_name)
                             if not batch_result:
                                 result = False
                         return result
 
-    def train_on_device(self, model, lr, momentum, train_loader=None, local_round=None, sda_size=1, layer2_devices=None):
+    def train_on_device(self, model, lr, momentum, train_loader=None, local_round=None, sda_size=1, layer2_devices=None, model_name=None):
         self.data_count = 0
         if self.layer_id == 1:
-            result = self.train_on_first_layer(model, lr, momentum, train_loader, local_round, layer2_devices=layer2_devices)
+            result = self.train_on_first_layer(model, lr, momentum, train_loader, local_round, layer2_devices=layer2_devices, model_name=model_name)
         else:
-            result = self.train_on_last_layer(model, lr, momentum, sda_size)
+            result = self.train_on_last_layer(model, lr, momentum, sda_size, model_name=model_name)
 
         return result, self.data_count
