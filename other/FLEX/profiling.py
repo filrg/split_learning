@@ -1,7 +1,7 @@
 import torch
 import time
 import numpy as np
-from src.model.Bert_AGNEWS import Bert_AGNEWS
+from src.model.BERT_AGNEWS import BERT_AGNEWS
 from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
 from src.dataset.dataloader import data_loader
 from tqdm import tqdm

@@ -12,7 +12,7 @@ parser = argparse.ArgumentParser(description="Split learning framework")
 parser.add_argument('--layer_id', type=int, required=True, help='ID of layer, start from 1')
 parser.add_argument('--device', type=str, required=False, help='Device of client')
 parser.add_argument('--c', type=int, required=True, help='ID cluster by device')
-parser.add_argument('--s', type=bool, required=True, help='Select/Reject device')
+parser.add_argument('--s', action='store_true', help='Select/Reject device')
 
 args = parser.parse_args()
 

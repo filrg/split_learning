@@ -8,7 +8,7 @@ import src.Log
 import src.Utils
 import torch
 
-from src.model.Bert_AGNEWS import Bert_AGNEWS
+from src.model.BERT_AGNEWS import BERT_AGNEWS
 from src.model.KWT_SPEECHCOMMANDS import KWT_SPEECHCOMMANDS
 from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
 from src.val.get_val import get_val
@@ -61,7 +61,7 @@ class Server:
         self.clients_params = [[] for _ in range(self.num_cluster)]
         self.clients_sizes = [[] for _ in range(self.num_cluster)]
 
-        self.edges_params = [None for _ in range(self.num_cluster)]
+        self.edges_params = [{} for _ in range(self.num_cluster)]
         self.edges_sizes = [None for _ in range(self.num_cluster)]
 
         self.infor_cluster = [[0,0] for _ in range(self.num_cluster)]
@@ -78,25 +78,30 @@ class Server:
     def distribution(self):
         if self.non_iid:
             # Bert
-            # label_distribution = np.array([
-            #     [0.25, 0.25, 0.25, 0.25],
-            #     [0.25, 0.25, 0.25, 0.25],
-            #     [0.25, 0.25, 0.25, 0.25],
-            #     [0.25, 0.25, 0.25, 0.25]]
-            # )
+            label_distribution = np.array([
+                [0.75, 0.0, 0.0, 0.25],
+                [0.0, 0.75, 0.0, 0.25],
+                [0.75, 0.0, 0.0, 0.25],
+                [0.0, 0.75, 0.0, 0.25],
+                [0.0, 0.0, 0.75, 0.25],
+                [0.0, 0.75, 0.0, 0.25],
+                [0.0, 0.0, 0.75, 0.25],
+                [0.75, 0.0, 0.0, 0.25],
+                [0.0, 0.0, 0.75, 0.25],]
+            )
 
             # VGG16
-            label_distribution = np.array([
-                [0.1376, 0.0589, 0.2163, 0.2322, 0.0163, 0.0417, 0.1706, 0.0845, 0.0300, 0.0128],
-                [0.0036, 0.0046, 0.1981, 0.0632, 0.1970, 0.1301, 0.1275, 0.0384, 0.2076, 0.0288],
-                [0.2172, 0.0002, 0.0328, 0.0597, 0.0733, 0.2204, 0.0000, 0.3430, 0.0489, 0.0050],
-                [0.0404, 0.2284, 0.1779, 0.0074, 0.0567, 0.0257, 0.0263, 0.0237, 0.1306, 0.2830],
-                [0.0142, 0.0838, 0.0240, 0.1238, 0.0046, 0.3854, 0.0094, 0.1984, 0.0868, 0.0690],
-                [0.1417, 0.0446, 0.0137, 0.2550, 0.0164, 0.0559, 0.0004, 0.0666, 0.3834, 0.0247],
-                [0.0038, 0.1174, 0.3174, 0.1164, 0.1699, 0.0587, 0.1382, 0.0747, 0.0032, 0.0000],
-                [0.1713, 0.1041, 0.0189, 0.0213, 0.0000, 0.1449, 0.2591, 0.1255, 0.1427, 0.0070],
-                [0.0004, 0.0171, 0.0764, 0.0000, 0.0762, 0.1191, 0.1538, 0.1362, 0.0002, 0.4206]
-            ])
+            # label_distribution = np.array([
+            #     [0.1376, 0.0589, 0.2163, 0.2322, 0.0163, 0.0417, 0.1706, 0.0845, 0.0300, 0.0128],
+            #     [0.0036, 0.0046, 0.1981, 0.0632, 0.1970, 0.1301, 0.1275, 0.0384, 0.2076, 0.0288],
+            #     [0.2172, 0.0002, 0.0328, 0.0597, 0.0733, 0.2204, 0.0000, 0.3430, 0.0489, 0.0050],
+            #     [0.0404, 0.2284, 0.1779, 0.0074, 0.0567, 0.0257, 0.0263, 0.0237, 0.1306, 0.2830],
+            #     [0.0142, 0.0838, 0.0240, 0.1238, 0.0046, 0.3854, 0.0094, 0.1984, 0.0868, 0.0690],
+            #     [0.1417, 0.0446, 0.0137, 0.2550, 0.0164, 0.0559, 0.0004, 0.0666, 0.3834, 0.0247],
+            #     [0.0038, 0.1174, 0.3174, 0.1164, 0.1699, 0.0587, 0.1382, 0.0747, 0.0032, 0.0000],
+            #     [0.1713, 0.1041, 0.0189, 0.0213, 0.0000, 0.1449, 0.2591, 0.1255, 0.1427, 0.0070],
+            #     [0.0004, 0.0171, 0.0764, 0.0000, 0.0762, 0.1191, 0.1538, 0.1362, 0.0002, 0.4206]
+            # ])
 
             # SPEEDCOMMANDS
             self.label_counts = (label_distribution * self.num_sample).astype(int)
@@ -197,7 +202,7 @@ class Server:
                     self.clients_params = [[] for _ in range(self.num_cluster)]
                     self.clients_sizes = [[] for _ in range(self.num_cluster)]
 
-                    self.edges_params = [None for _ in range(self.num_cluster)]
+                    self.edges_params = [{} for _ in range(self.num_cluster)]
                     self.edges_sizes = [None for _ in range(self.num_cluster)]
 
                 else:
@@ -239,47 +244,22 @@ class Server:
 
                         if self.model_name == 'VGG16':
                             klass = VGG16_CIFAR10
-                            if layer_id == 1:
-                                model = klass(end_layer=self.cut_layer[cluster])
-                            else:
-                                model = klass(start_layer=self.cut_layer[cluster])
-                            state_dict = model.state_dict()
-                            keys = state_dict.keys()
-
-                            for key in keys:
-                                state_dict[key] = self.full_state_dict[key]
                         elif self.model_name == "KWT":
                             klass = KWT_SPEECHCOMMANDS
-                            if layer_id == 1:
-                                model = klass(end_layer=self.cut_layer[cluster])
-                            else:
-                                model = klass(start_layer=self.cut_layer[cluster])
-                            state_dict = model.state_dict()
-                            keys = state_dict.keys()
-
-                            for key in keys:
-                                state_dict[key] = self.full_state_dict[key]
                         else:
-                            klass = Bert_AGNEWS
-                            if layer_id == 1:
-                                model = klass(layer_id=1, n_block=self.cut_layer[cluster])
-                                state_dict = model.state_dict()
-                                keys = state_dict.keys()
+                            klass = BERT_AGNEWS
 
-                                for key in keys:
-                                    state_dict[key] = self.full_state_dict[key]
-                            else:
-                                model = klass(layer_id=2, n_block=12 - self.cut_layer[cluster])
-                                state_dict = model.state_dict()
-                                state_dict = src.Utils.change_keys(state_dict, self.cut_layer[cluster], True)
-                                keys = state_dict.keys()
+                        if layer_id == 1:
+                            model = klass(end_layer=self.cut_layer[cluster])
+                        else:
+                            model = klass(start_layer=self.cut_layer[cluster])
+                        state_dict = model.state_dict()
+                        keys = state_dict.keys()
 
-                                for key in keys:
-                                    state_dict[key] = self.full_state_dict[key]
+                        for key in keys:
+                            state_dict[key] = self.full_state_dict[key]
 
-                                state_dict = src.Utils.change_keys(state_dict, self.cut_layer[cluster], False)
-
-                            src.Log.print_with_color(f"Load pretrain model Bert successfully", "green")
+                        src.Log.print_with_color(f"Load model successfully", "green")
                     else:
                         self.logger.log_info(f"File {filepath} does not exist.")
 
@@ -334,14 +314,10 @@ class Server:
 
     def concatenate(self):
         list_state_dict = []
-        full_dict = {}
         for idx in range(self.num_cluster):
+            full_dict = {}
             full_dict.update(copy.deepcopy(self.clients_avg[idx]))
-            if self.model_name == 'Bert':
-                sd = src.Utils.change_keys(self.edges_params[idx], self.cut_layer[0], True)
-            else:
-                sd = self.edges_params[idx]
-            full_dict.update(copy.deepcopy(sd))
+            full_dict.update(copy.deepcopy(self.edges_params[idx]))
             list_state_dict.append(full_dict)
 
         self.full_state_dict = src.Utils.fedavg_state_dicts(list_state_dict)

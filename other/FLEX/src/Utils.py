@@ -33,26 +33,16 @@ def delete_old_queues(address, username, password, virtual_host):
 
 
 def fedavg_state_dicts(state_dicts, weights = None):
-    """
-    Trung bình (FedAvg) một list các state_dict.
-    - state_dicts: list các dict {param_name: tensor}
-    - weights: list trọng số tương ứng (mặc định None nghĩa là mỗi model weight=1)
-    Trả về một dict {param_name: tensor_avg}
-    """
     num = len(state_dicts)
-    if num == 0:
-        raise ValueError("fedavg_state_dicts: không có state_dict nào để trung bình.")
 
     if weights is None:
         weights = [1.0] * num
     total_w = sum(weights)
 
-    # Tập hợp tất cả key
     all_keys = set().union(*(sd.keys() for sd in state_dicts))
     avg_dict = {}
 
     for key in all_keys:
-        # gom tensor + weight, xử lý NaN
         acc = None
         for sd, w in zip(state_dicts, weights):
             if key not in sd:
@@ -63,10 +53,8 @@ def fedavg_state_dicts(state_dicts, weights = None):
             t = t * w
             acc = t if acc is None else acc + t
 
-        # chia trung bình
         avg = acc / total_w
 
-        # cast về dtype gốc
         orig = next(sd[key] for sd in state_dicts if key in sd)
         if orig.dtype in (torch.int8, torch.int16, torch.int32, torch.int64, torch.bool):
             avg = avg.round().to(orig.dtype)
@@ -76,21 +64,3 @@ def fedavg_state_dicts(state_dicts, weights = None):
         avg_dict[key] = avg
 
     return avg_dict
-
-def change_keys(state_dict, num, increase=True):
-    exclude_prefix = ["h.", "layers."]
-    new_state_dict = {}
-    for k, v in state_dict.items():
-        if any(k.startswith(prefix) for prefix in exclude_prefix):
-            parts = k.split(".")
-            if increase:
-                parts[1] = str(int(parts[1]) + num)
-            else:
-                parts[1] = str(int(parts[1]) - num)
-            new_key = ".".join(parts)
-            new_state_dict[new_key] = v
-        else:
-            new_state_dict[k] = v
-            continue
-
-    return new_state_dict

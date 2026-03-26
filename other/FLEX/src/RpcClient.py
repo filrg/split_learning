@@ -3,11 +3,11 @@ import pickle
 import copy
 
 import src.Log
-from src.model.Bert_AGNEWS import Bert_AGNEWS
+from src.model.BERT_AGNEWS import BERT_AGNEWS
 from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
 from src.model.KWT_SPEECHCOMMANDS import KWT_SPEECHCOMMANDS
 from src.train.VGG16 import Train_VGG16
-from src.train.Bert import Train_Bert
+from src.train.BERT import Train_BERT
 from src.train.KWT import Train_KWT
 from src.dataset.dataloader import data_loader
 
@@ -53,8 +53,8 @@ class RpcClient:
 
             if model_name == 'VGG16':
                 self.model_train = Train_VGG16(self.client_id, self.layer_id, self.channel, self.device)
-            elif model_name == 'Bert':
-                self.model_train = Train_Bert(self.client_id, self.layer_id, self.channel, self.device)
+            elif model_name == 'BERT':
+                self.model_train = Train_BERT(self.client_id, self.layer_id, self.channel, self.device)
                 self.peft_config = LoraConfig(
                     task_type="SEQ_CLS",
                     r=8, lora_alpha=16, lora_dropout=0.1,
@@ -69,22 +69,18 @@ class RpcClient:
 
             # Load model
             if self.model is None:
-                if model_name != 'Bert':
-                    if model_name == 'VGG16':
-                        klass = VGG16_CIFAR10
-                    else:
-                        klass = KWT_SPEECHCOMMANDS
 
-                    if self.layer_id == 1:
-                        self.model = klass(end_layer=cut_layer)
-                    else:
-                        self.model = klass(start_layer=cut_layer)
+                if model_name == 'VGG16':
+                    klass = VGG16_CIFAR10
+                elif model_name == 'KWT':
+                    klass = KWT_SPEECHCOMMANDS
                 else:
-                    klass = Bert_AGNEWS
-                    if self.layer_id == 1:
-                        self.model = klass(layer_id=1, n_block=cut_layer)
-                    else:
-                        self.model = klass(layer_id=2, n_block=12 - cut_layer)
+                    klass = BERT_AGNEWS
+
+                if self.layer_id == 1:
+                    self.model = klass(end_layer=cut_layer)
+                else:
+                    self.model = klass(start_layer=cut_layer)
 
             learning = self.response["learning"]
             batch_size = learning["batch-size"]
@@ -92,10 +88,10 @@ class RpcClient:
             if state_dict is not None:
                 self.model.load_state_dict(state_dict)
 
-            if model_name == 'Bert':
+            if model_name == 'BERT':
                 self.model = get_peft_model(self.model, self.peft_config)
                 if self.layer_id == 2:
-                    for param in self.model.classifier.parameters():
+                    for param in self.model.layer15.classifier.parameters():
                         param.requires_grad = True
 
             self.model.to(self.device)
@@ -109,7 +105,7 @@ class RpcClient:
             else:
                 result, size, send = self.model_train.train_on_last_layer(self.model, learning, self.cluster)
 
-            if model_name == 'Bert':
+            if model_name == 'BERT':
                 self.model = self.model.merge_and_unload()
             if send:
                 model_state_dict = copy.deepcopy(self.model.state_dict())
