@@ -1,46 +1,14 @@
-
 import numpy as np
 import math
 from tqdm import tqdm
 
-import torchvision
-import torchvision.transforms as transforms
-import torch.nn as nn
-
+from src.dataset.dataloader import data_loader
 from src.model import *
 
 def test(model_name, data_name, state_dict_full, logger, server_connection=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if data_name == "MNIST":
-        transform_test = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
-        ])
-        testset = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform_test)
 
-    elif data_name == "CIFAR10":
-        transform_test = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-        ])
-        testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
-    elif data_name == "SPEECHCOMMANDS":
-        from src.dataset.SPEECHCOMMANDS import SpeechCommandsDataset
-        testset_full = SpeechCommandsDataset(root='./data', subset='testing')
-        indices = np.random.choice(len(testset_full), 5000, replace=False)
-        testset = torch.utils.data.Subset(testset_full, indices)
-    elif data_name == "AGNEWS":
-        from datasets import load_dataset
-        from transformers import BertTokenizer
-        from src.dataset.AGNEWS import AGNEWS_DATASET, load_test_AGNEWS
-        dataset = load_dataset('ag_news', download_mode='reuse_dataset_if_exists', cache_dir='./hf_cache')
-        tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
-        test_texts, test_labels = load_test_AGNEWS(1000, dataset)
-        testset = AGNEWS_DATASET(test_texts, test_labels, tokenizer, max_length=128)
-    else:
-        raise ValueError(f"Data name '{data_name}' is not valid.")
-
-    test_loader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
+    test_loader = data_loader(data_name=data_name, train=False)
 
     criterion = nn.CrossEntropyLoss()
 

@@ -196,10 +196,7 @@ class BERT_AGNEWS(nn.Module):
             self.layer14 = BertPooler(hidden_size)
             
         if self.start_layer < 15 <= self.end_layer:
-            self.layer15 = nn.Sequential(
-                nn.Dropout(dropout_prob),
-                nn.Linear(hidden_size, 4)
-            )
+            self.layer15 = BertClassifier(hidden_size, 4)
 
     def forward(self, input_ids=None, token_type_ids=None, **kwargs):
         x = input_ids

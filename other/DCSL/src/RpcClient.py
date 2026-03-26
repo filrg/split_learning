@@ -1,15 +1,11 @@
 import time
 import pickle
-import random
 import copy
-import torchvision
-import torchvision.transforms as transforms
-
-from collections import defaultdict
-from tqdm import tqdm
 
 import src.Log
+
 from src.model import *
+from src.dataset.dataloader import data_loader
 
 from peft import LoraConfig, get_peft_model
 
@@ -24,6 +20,7 @@ class RpcClient:
 
         self.response = None
         self.model = None
+        self.train_loader = None
         self.label_count = None
         self.peft_config = None
 
@@ -59,62 +56,6 @@ class RpcClient:
             if self.label_count is not None:
                 src.Log.print_with_color(f"Label distribution of client: {self.label_count}", "yellow")
 
-            # Load training dataset
-            if self.layer_id == 1 and data_name and not self.train_set and not self.label_to_indices:
-                if data_name == "MNIST":
-                    transform_train = transforms.Compose([
-                        transforms.ToTensor(),
-                        transforms.Normalize((0.5,), (0.5,))
-                    ])
-                    self.train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
-                                                                transform=transform_train)
-
-                elif data_name == "CIFAR10":
-                    transform_train = transforms.Compose([
-                        transforms.RandomCrop(32, padding=4),
-                        transforms.RandomHorizontalFlip(),
-                        transforms.ToTensor(),
-                        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-                    ])
-                    self.train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
-                                                                  transform=transform_train)
-                elif data_name == "SPEECHCOMMANDS":
-                    from src.dataset.SPEECHCOMMANDS import SpeechCommandsDataset
-                    self.train_set = SpeechCommandsDataset(root='./data', subset='training')
-                elif data_name == "AGNEWS":
-                    from datasets import load_dataset
-                    from transformers import BertTokenizer
-                    from src.dataset.AGNEWS import AGNEWS_DATASET
-                    
-                    dataset = load_dataset('ag_news', download_mode='reuse_dataset_if_exists', cache_dir='./hf_cache')
-                    tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
-                    
-                    train_data = dataset['train']
-                    texts = train_data['text']
-                    labels = train_data['label']
-                    
-                    self.train_set = AGNEWS_DATASET(texts, labels, tokenizer, max_length=128)
-                else:
-                    self.train_set = None
-                    raise ValueError(f"Data name '{data_name}' is not valid.")
-
-                self.label_to_indices = defaultdict(list)
-                if data_name == "AGNEWS":
-                    for idx, label in enumerate(self.train_set.labels):
-                        self.label_to_indices[int(label)].append(idx)
-                elif data_name == "SPEECHCOMMANDS":
-                    from src.dataset.SPEECHCOMMANDS import CLASSES
-                    for idx, (audio_path, label_name) in enumerate(self.train_set.samples):
-                        if label_name in CLASSES:
-                            label_idx = CLASSES.index(label_name)
-                        else:
-                            label_idx = CLASSES.index('unknown')
-                        self.label_to_indices[label_idx].append(idx)
-                else:
-                    for idx, (_, label) in tqdm(enumerate(self.train_set)):
-                        self.label_to_indices[int(label)].append(idx)
-
-            # Load model
             if self.model is None:
 
                 klass = globals()[f'{model_name}_{data_name}']
@@ -132,11 +73,9 @@ class RpcClient:
             sda_size = self.response.get("sda_size", 1)
             layer2_devices = self.response.get("layer2_devices", [])
 
-            # Read parameters and load to model
             if state_dict:
                 self.model.load_state_dict(state_dict)
 
-            # Apply LoRA for BERT model
             if model_name == 'BERT':
                 if self.peft_config is None:
                     self.peft_config = LoraConfig(
@@ -152,25 +91,18 @@ class RpcClient:
 
             self.model.to(self.device)
 
-            # Start training
             if self.layer_id == 1:
-                selected_indices = []
-                for label, count in enumerate(self.label_count):
-                    selected_indices.extend(random.sample(self.label_to_indices[label], count))
+                if self.train_loader is None:
+                    self.train_loader = data_loader(data_name, batch_size, self.label_count, train=True)
 
-                subset = torch.utils.data.Subset(self.train_set, selected_indices)
-                train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
-
-                result, size = self.train_func(self.model, lr, momentum, train_loader, local_round=local_round, layer2_devices=layer2_devices, model_name=model_name)
+                result, size = self.train_func(self.model, lr, momentum, self.train_loader, local_round=local_round, layer2_devices=layer2_devices, model_name=model_name)
 
             else:
                 result, size = self.train_func(self.model, lr, momentum, None, local_round=local_round, sda_size=sda_size, model_name=model_name)
 
-            # Merge LoRA weights back for BERT
             if model_name == 'BERT':
                 self.model = self.model.merge_and_unload()
 
-            # Stop training, then send parameters to server
             model_state_dict = copy.deepcopy(self.model.state_dict())
             if self.device != "cpu":
                 for key in model_state_dict:
@@ -184,7 +116,6 @@ class RpcClient:
             return True
         elif action == "STOP":
             return False
-
 
     def send_to_server(self, message):
         self.response = None

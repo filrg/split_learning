@@ -76,6 +76,9 @@ class Server:
         self.idx = 0
         self.current_clients_cluster = 0
 
+        self.current_lr = 0
+        self.sda_size = 0
+
         self.channel.basic_qos(prefetch_count=1)
         self.reply_channel = self.connection.channel()
         self.channel.basic_consume(queue='rpc_queue', on_message_callback=self.on_request)
@@ -229,6 +232,7 @@ class Server:
                         self.avg_state_dict = []
                         if not src.Validation.test(self.model_name, self.data_name, state_dict_full, self.logger, self.connection):
                             self.logger.log_warning("Training failed!")
+                            self.round = 0
                         else:
                             torch.save(state_dict_full, f'{self.model_name}_{self.data_name}.pth')
                             self.round -= 1
@@ -287,26 +291,6 @@ class Server:
                         for key in keys:
                             if key in full_state_dict:
                                 state_dict[key] = full_state_dict[key]
-                            elif self.model_name == 'BERT':
-                                flex_key = key
-                                if key.startswith('layer1.'):
-                                    flex_key = key.replace('layer1.', 'embeddings.')
-                                elif key.startswith('layer14.'):
-                                    flex_key = key.replace('layer14.', 'pooler.')
-                                elif key.startswith('layer15.1.'):
-                                    flex_key = key.replace('layer15.1.', 'classifier.')
-                                else:
-                                    import re
-                                    match = re.match(r'layer(\d+)\.(.*)', key)
-                                    if match:
-                                        layer_idx = int(match.group(1))
-                                        if 2 <= layer_idx <= 13:
-                                            flex_key = f'layers.{layer_idx - 2}.{match.group(2)}'
-                                
-                                if flex_key in full_state_dict:
-                                    state_dict[key] = full_state_dict[flex_key]
-                                else:
-                                    raise KeyError(f"{key} (mapped to {flex_key}) not found in weight file.")
                             else:
                                 state_dict[key] = full_state_dict[key]
                         self.logger.log_info("Model loaded successfully.")
