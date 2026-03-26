@@ -4,12 +4,15 @@ import random
 import copy
 import torchvision
 import torchvision.transforms as transforms
+import torch
 
 from collections import defaultdict
 from tqdm import tqdm
 
 import src.Log
 from src.model import *
+
+from peft import LoraConfig, get_peft_model
 
 
 class RpcClient:
@@ -23,6 +26,7 @@ class RpcClient:
         self.response = None
         self.model = None
         self.label_count = None
+        self.peft_config = None
 
         self.train_set = None
         self.label_to_indices = None
@@ -75,49 +79,105 @@ class RpcClient:
                     ])
                     self.train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
                                                                   transform=transform_train)
+                elif data_name == "SPEECHCOMMANDS":
+                    from src.dataset.SPEECHCOMMANDS import SpeechCommandsDataset
+                    self.train_set = SpeechCommandsDataset(root='./data', subset='training')
+                elif data_name == "AGNEWS":
+                    from datasets import load_dataset
+                    from transformers import BertTokenizer
+                    from src.dataset.AGNEWS import AGNEWS_DATASET
+                    
+                    dataset = load_dataset('ag_news', download_mode='reuse_dataset_if_exists', cache_dir='./hf_cache')
+                    tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
+                    
+                    train_data = dataset['train']
+                    texts = train_data['text']
+                    labels = train_data['label']
+                    
+                    self.train_set = AGNEWS_DATASET(texts, labels, tokenizer, max_length=128)
                 else:
                     self.train_set = None
                     raise ValueError(f"Data name '{data_name}' is not valid.")
 
                 self.label_to_indices = defaultdict(list)
-                for idx, (_, label) in tqdm(enumerate(self.train_set)):
-                    self.label_to_indices[int(label)].append(idx)
+                if hasattr(self.train_set, 'labels'):
+                    for idx, label in enumerate(self.train_set.labels):
+                        self.label_to_indices[int(label)].append(idx)
+                else:
+                    for idx, (_, label) in tqdm(enumerate(self.train_set)):
+                        self.label_to_indices[int(label)].append(idx)
 
             # Load model
             if self.model is None:
-
-                klass = globals()[f'{model_name}_{data_name}']
+                klass = globals().get(f'{model_name}_{data_name}')
+                if klass is None:
+                    # try alternative names or mappings if needed
+                    if model_name.upper() == 'BERT' and data_name == 'AGNEWS':
+                        klass = Bert_AGNEWS
+                    elif model_name == 'KWT':
+                        klass = KWT_SPEECHCOMMANDS
+                
+                if klass is None:
+                    raise ValueError(f"Model class for {model_name} and {data_name} not found.")
 
                 if cut_layers[1] == -1:
                     self.model = klass(start_layer=cut_layers[0])
                 else:
-                    self.model = klass(start_layer=cut_layers[0], end_layer=cut_layers[1])
+                    if klass == Bert_AGNEWS:
+                         self.model = klass(layer_id=1, n_block=cut_layers[1]) if self.layer_id == 1 else klass(layer_id=2, n_block=12 - cut_layers[0])
+                    else:
+                         self.model = klass(start_layer=cut_layers[0], end_layer=cut_layers[1])
 
                 self.model.to(self.device)
 
             batch_size = self.response["batch_size"]
             lr = self.response["lr"]
             momentum = self.response["momentum"]
-            out_cluster_id = self.response.get("out_cluster_id", -1)
+            sda_size = self.response.get("sda_size", 1)
+            layer2_devices = self.response.get("layer2_devices", [])
 
             # Read parameters and load to model
             if state_dict:
                 self.model.load_state_dict(state_dict)
 
+            # Apply LoRA for BERT model
+            if model_name.upper() == 'BERT':
+                if self.peft_config is None:
+                    self.peft_config = LoraConfig(
+                        task_type="SEQ_CLS",
+                        r=8, lora_alpha=16, lora_dropout=0.1,
+                        bias="none",
+                        target_modules=["query", "key", "value", "dense"]
+                    )
+                self.model = get_peft_model(self.model, self.peft_config)
+                # Note: layer15 might be a placeholder or refer to specific layers in user's model
+                if self.layer_id == 2:
+                    if hasattr(self.model, 'layer15'):
+                        for param in self.model.layer15.parameters():
+                            param.requires_grad = True
+
+            self.model.to(self.device)
+
             # Start training
             if self.layer_id == 1:
                 selected_indices = []
                 for label, count in enumerate(self.label_count):
-                    selected_indices.extend(random.sample(self.label_to_indices[label], count))
+                    available = len(self.label_to_indices[label])
+                    actual_count = min(count, available)
+                    if actual_count > 0:
+                        selected_indices.extend(random.sample(self.label_to_indices[label], actual_count))
 
                 subset = torch.utils.data.Subset(self.train_set, selected_indices)
                 train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
 
-                result, size = self.train_func(self.model, lr, momentum, train_loader, local_round=local_round, out_cluster_id=out_cluster_id)
+                result, size = self.train_func(self.model, lr, momentum, train_loader, local_round=local_round, layer2_devices=layer2_devices, model_name=model_name)
 
             else:
-                # Layer 2 handles data asynchronously from Layer 1, no local_round limit
-                result, size = self.train_func(self.model, lr, momentum, out_cluster_id=out_cluster_id)
+                result, size = self.train_func(self.model, lr, momentum, None, local_round=local_round, sda_size=sda_size, model_name=model_name)
+
+            # Merge LoRA weights back for BERT
+            if model_name.upper() == 'BERT':
+                self.model = self.model.merge_and_unload()
 
             # Stop training, then send parameters to server
             model_state_dict = copy.deepcopy(self.model.state_dict())
@@ -131,18 +191,13 @@ class RpcClient:
             src.Log.print_with_color("[>>>] Client sent parameters to server", "red")
             self.send_to_server(data)
             return True
-        elif action == "PAUSE":
-            return True
         elif action == "STOP":
             return False
+        return True
 
 
     def send_to_server(self, message):
-        self.response = None
-
         self.channel.queue_declare('rpc_queue', durable=False)
         self.channel.basic_publish(exchange='',
                                    routing_key='rpc_queue',
                                    body=pickle.dumps(message))
-
-        return self.response

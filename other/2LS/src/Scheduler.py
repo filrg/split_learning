@@ -63,7 +63,7 @@ class Scheduler:
                                    routing_key='rpc_queue',
                                    body=pickle.dumps(message))
 
-    def train_on_first_layer(self, model, lr, momentum, train_loader=None, local_round=1, out_cluster_id=-1):
+    def train_on_first_layer(self, model, lr, momentum, train_loader=None, local_round=1, out_cluster_id=-1, **kwargs):
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
 
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
@@ -134,7 +134,7 @@ class Scheduler:
                     return True
             time.sleep(0.5)
 
-    def train_on_last_layer(self, model, lr, momentum, out_cluster_id=-1):
+    def train_on_last_layer(self, model, lr, momentum, out_cluster_id=-1, **kwargs):
 
         optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
         result = True
@@ -220,11 +220,11 @@ class Scheduler:
                         if received_data["action"] == "PAUSE":
                             return result
 
-    def train_on_device(self, model, lr, momentum, train_loader=None, local_round=None, out_cluster_id=-1):
+    def train_on_device(self, model, lr, momentum, train_loader=None, local_round=None, out_cluster_id=-1, **kwargs):
         self.data_count = 0
         if self.layer_id == 1:
-            result = self.train_on_first_layer(model, lr, momentum, train_loader, local_round, out_cluster_id=out_cluster_id)
+            result = self.train_on_first_layer(model, lr, momentum, train_loader, local_round, out_cluster_id=out_cluster_id, **kwargs)
         else:
-            result = self.train_on_last_layer(model, lr, momentum, out_cluster_id=out_cluster_id)
+            result = self.train_on_last_layer(model, lr, momentum, out_cluster_id=out_cluster_id, **kwargs)
 
         return result, self.data_count

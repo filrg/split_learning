@@ -1,4 +1,5 @@
 import logging
+import os
 
 
 class Colors:
@@ -13,25 +14,37 @@ class Colors:
 
 
 class Logger:
-    def __init__(self, log_path, debug_mode=False):
+    def __init__(self, log_path, debug_mode=False, minimal=False):
         # Thiết lập logger với tên "my_logger"
         self.logger = logging.getLogger("my_logger")
         self.logger.setLevel(logging.DEBUG)  # Mức log
         self.debug_mode = debug_mode
+        self.minimal = minimal
 
-        # Tạo file handler để ghi log vào file
-        file_handler = logging.FileHandler(log_path)
-        file_handler.setLevel(logging.DEBUG)
+        # Clear existing handlers to avoid duplicate logs if re-initialized
+        if self.logger.hasHandlers():
+            self.logger.handlers.clear()
 
-        # Định dạng log
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        file_handler.setFormatter(formatter)
+        if log_path:
+            # Tạo thư mục log nếu chưa tồn tại
+            log_dir = os.path.dirname(log_path)
+            if log_dir:
+                os.makedirs(log_dir, exist_ok=True)
 
-        # Gắn file handler vào logger
-        self.logger.addHandler(file_handler)
+            # Tạo file handler để ghi log vào file
+            file_handler = logging.FileHandler(log_path)
+            file_handler.setLevel(logging.DEBUG)
+
+            # Định dạng log
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            file_handler.setFormatter(formatter)
+
+            # Gắn file handler vào logger
+            self.logger.addHandler(file_handler)
 
     def log_info(self, message):
-        print(f"[INFO] {message}")
+        if not self.minimal:
+            print(f"[INFO] {message}")
         self.logger.info(message)
 
     def log_warning(self, message):
