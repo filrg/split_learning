@@ -7,18 +7,20 @@ import torch.nn as nn
 
 import src.Log
 
-class Train_Bert:
-    def __init__(self, client_id, layer_id, channel, device):
+class Train_BERT:
+    def __init__(self, client_id, layer_id, channel, device, in_cluster_id, idx):
         self.client_id = client_id
         self.layer_id = layer_id
         self.channel = channel
         self.device = device
         self.data_count = 0
         self.size = None
+        self.in_cluster_id = in_cluster_id
+        self.idx = idx
 
-    def send_intermediate_output(self, output, labels, trace, cluster=None):
+    def send_intermediate_output(self, output, labels, trace):
 
-        forward_queue_name = f'intermediate_queue_{self.layer_id}_{cluster}'
+        forward_queue_name = f'intermediate_queue_{self.layer_id}_{self.idx}'
         self.channel.queue_declare(forward_queue_name, durable=False)
 
         if trace:
@@ -64,7 +66,7 @@ class Train_Bert:
                                    routing_key='rpc_queue',
                                    body=pickle.dumps(message))
 
-    def train_on_first_layer(self, model, learning, train_loader=None, cluster=0):
+    def train_on_first_layer(self, model, learning, train_loader=None):
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning["learning-rate"], weight_decay=learning["weight-decay"])
 
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
@@ -84,7 +86,7 @@ class Train_Bert:
 
             self.data_count += 1
 
-            self.send_intermediate_output(intermediate_output, labels, trace=None, cluster=cluster)
+            self.send_intermediate_output(intermediate_output, labels, trace=None)
 
             while True:
                 method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
@@ -102,7 +104,8 @@ class Train_Bert:
                     time.sleep(0.5)
 
         notify_data = {"action": "NOTIFY", "client_id": self.client_id, "layer_id": self.layer_id,
-                       "message": "Finish training!", "cluster": cluster}
+                       "in_cluster_id": self.in_cluster_id,
+                       "message": "Finish training!"}
 
         src.Log.print_with_color("[>>>] Finish training!", "red")
         self.send_to_server(notify_data)
@@ -114,15 +117,15 @@ class Train_Bert:
                 received_data = pickle.loads(body)
                 src.Log.print_with_color(f"[<<<] Received message from server {received_data}", "blue")
                 if received_data["action"] == "PAUSE":
-                    return True, self.data_count, received_data["send"]
+                    return True, self.data_count
             time.sleep(0.5)
 
-    def train_on_last_layer(self, model, learning, cluster=0):
+    def train_on_last_layer(self, model, learning):
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning["learning-rate"], weight_decay=learning["weight-decay"])
         criterion = nn.CrossEntropyLoss()
         result = True
 
-        forward_queue_name = f'intermediate_queue_{self.layer_id - 1}_{cluster}'
+        forward_queue_name = f'intermediate_queue_{self.layer_id - 1}_{self.idx}'
         self.channel.queue_declare(queue=forward_queue_name, durable=False)
         self.channel.basic_qos(prefetch_count=1)
         print('Waiting for intermediate output. To exit press CTRL+C')
@@ -163,5 +166,5 @@ class Train_Bert:
                     received_data = pickle.loads(body)
                     src.Log.print_with_color(f"[<<<] Received message from server {received_data}", "blue")
                     if received_data["action"] == "PAUSE":
-                        return result, self.data_count, received_data["send"]
+                        return result, self.data_count
                 time.sleep(0.5)

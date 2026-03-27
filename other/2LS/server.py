@@ -3,7 +3,6 @@ import sys
 import signal
 from src.Server import Server
 from src.Utils import delete_old_queues
-import src.Log
 import yaml
 
 parser = argparse.ArgumentParser(description="Split learning framework with controller.")
@@ -29,4 +28,3 @@ if __name__ == "__main__":
     delete_old_queues(address, username, password, virtual_host)
     server = Server(config)
     server.start()
-    src.Log.print_with_color("Ok, ready!", "green")

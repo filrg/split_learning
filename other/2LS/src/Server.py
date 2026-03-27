@@ -1,5 +1,5 @@
+import torch
 import os
-import time
 import random
 import pika
 import pickle
@@ -9,12 +9,9 @@ import copy
 import src.Log
 import src.Utils
 from src.val.get_val import get_val
-from src.model.Bert_AGNEWS import Bert_AGNEWS
+from src.model.BERT_AGNEWS import BERT_AGNEWS
 from src.model.KWT_SPEECHCOMMANDS import KWT_SPEECHCOMMANDS
 from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
-
-from src.model import *
-
 
 class Server:
     def __init__(self, config):
@@ -24,36 +21,18 @@ class Server:
         password = config["rabbit"]["password"]
         virtual_host = config["rabbit"]["virtual-host"]
 
-        self.partition = config["server"]["manual-cluster"]
-
         self.model_name = config["server"]["model"]
         self.data_name = config["server"]["data-name"]
         self.total_clients = config["server"]["clients"]
-        self.list_cut_layers = config["server"]["manual-cluster"]["cut-layers"]
+        self.num_cluster = config["server"]["num-cluster"]
+        self.cut_layer = config["server"]["cut-layer"]
+        self.info_cluster = config["server"]["info-cluster"]
         self.global_round = config["server"]["global-round"]
-        self.local_round = config["server"]["local-round"]
         self.round = self.global_round
-        self.validation = config["server"]["validation"]
-
-        self.is_clustered = True
-
-        #  clustering
-        self.out_cluster_models = {}  # {out_idx: state_dict}
-        self.out_cluster_order = []  # Shuffled of out-clusters
-        self.current_out_cluster_cursor = 0  # Pointer current out-cluster
-        self.current_out_cluster_idx = 0
-        self.finished_clients_in_cluster = {}  # {(out_idx, in_idx): count}
-        self.finished_upper_clients_count = {} # {out_idx: count}
-
-        # FedAsync: track thứ tự in-cluster đến cho mỗi out-cluster
-        self.incluster_fedasync_order = {}  # {out_idx: [in_idx_first, in_idx_second, ...]}
-        self.incluster_l1_avg = {}  # {(out_idx, in_idx): state_dict} — saved L1 FedAvg result
-        self.incluster_l2_finished = {}  # {(out_idx, in_idx): count} — L2 done per in-cluster
+        self.global_model = None
 
         # Clients
-        self.batch_size = config["learning"]["batch-size"]
-        self.lr = config["learning"]["learning-rate"]
-        self.momentum = config["learning"]["momentum"]
+        self.learning = config["learning"]
         self.data_distribution = config["server"]["data-distribution"]
 
         # Data distribution
@@ -62,7 +41,6 @@ class Server:
         self.num_sample = self.data_distribution["num-sample"]
         self.random_seed = config["server"]["random-seed"]
         self.label_counts = None
-        self.label_ = None
 
         if self.random_seed:
             random.seed(self.random_seed)
@@ -70,53 +48,34 @@ class Server:
         log_path = config["log_path"]
 
         credentials = pika.PlainCredentials(username, password)
-        try:
-            parameters = pika.ConnectionParameters(
-                host=address,
-                port=5672,
-                virtual_host=virtual_host,
-                credentials=credentials,
-                heartbeat=0,
-                socket_timeout=5
-            )
-            self.connection = pika.BlockingConnection(parameters)
-            self.channel = self.connection.channel()
-            src.Log.print_with_color(f"[OK] Server connected to RabbitMQ at {address}", "green")
-        except Exception as e:
-            src.Log.print_with_color(f"[ERROR] Server failed to connect to RabbitMQ at {address}: {e}", "red")
-            sys.exit(1)
+        self.connection = pika.BlockingConnection(
+            pika.ConnectionParameters(address, 5672, f'{virtual_host}', credentials))
+        self.channel = self.connection.channel()
         self.channel.queue_declare(queue='rpc_queue')
 
-        self.current_clients = 0
+        self.out_cluster_ids = list(range(self.num_cluster))
+        self.count_notify = [] # list
+        self.count_update = [] # list
+        self.check_in_cluster = []
+        self.in_params = None # list([[],[]])
+        self.in_sizes = None # list([[],[]])
         self.register_clients = [0 for _ in range(len(self.total_clients))]
         self.responses = {}  # Save response
         self.list_clients = []
         self.round_result = True
 
-        # Model (Isolated buffers per cluster: (layer, out_idx, in_idx))
-        self.global_model_parameters = {}
-        self.global_client_sizes = {}
-
-        # Sequential
-        self.edge_device = []
-        self.device_begin = []
-        self.device_stop = []
-        self.avg_state_dict = []
-        self.upper_clients = {}  # {out_cluster_id: [(cid, layer_id)]} for layer 2 clients
+        self.current_out_cluster = 0
+        self.full_state_dict = None
 
         self.channel.basic_qos(prefetch_count=1)
         self.reply_channel = self.connection.channel()
         self.channel.basic_consume(queue='rpc_queue', on_message_callback=self.on_request)
 
-        self.start_time = time.time()
         debug_mode = config["debug_mode"]
-        # Server logger now goes to server.log
-        self.server_logger = src.Log.Logger(f"{log_path}/server.log", debug_mode)
-        # Accuracy logger is removed, using server_logger instead
-        
-        src.Log.print_with_color(f"Application start. Server is waiting for {self.total_clients} clients.", "green")
-        self.server_logger.log_info(f"Application start. Server is waiting for {self.total_clients} clients.")
 
+        self.logger = src.Log.Logger(f"{log_path}/app.log", debug_mode)
+
+        self.logger.log_info(f"Application start. Server is waiting for {self.total_clients} clients.")
 
     def distribution(self):
         if self.non_iid:
@@ -144,331 +103,195 @@ class Server:
                                                ])
 
             self.label_counts = (label_distribution * self.num_sample).astype(int)
-            self.label_ = copy.deepcopy(self.label_counts)
-            self.label_ = self.label_.tolist()
         else:
             self.label_counts = np.full((self.total_clients[0], self.num_label), self.num_sample // self.num_label)
-            self.label_ = copy.deepcopy(self.label_counts)
-            self.label_ = self.label_.tolist()
 
     def on_request(self, ch, method, props, body):
         message = pickle.loads(body)
         routing_key = props.reply_to
         action = message["action"]
         client_id = message["client_id"]
-        layer_id = int(message["layer_id"])
+        layer_id = message["layer_id"]
 
         self.responses[routing_key] = message
-        ch.basic_ack(delivery_tag=method.delivery_tag)  # Ack immediately — always
 
         if action == "REGISTER":
             in_cluster_id = message["in_cluster_id"]
             out_cluster_id = message["out_cluster_id"]
-            idx = message.get("idx", -1)
-            cid_str = str(client_id)
-            if (cid_str, layer_id, in_cluster_id, out_cluster_id, idx) not in self.list_clients:
-                self.list_clients.append((cid_str, layer_id, in_cluster_id, out_cluster_id, idx))
+            idx = message["idx"]
+
+            if (client_id, layer_id, in_cluster_id, out_cluster_id, idx) not in self.list_clients:
+                self.list_clients.append((client_id, layer_id, in_cluster_id, out_cluster_id, idx))
             
             src.Log.print_with_color(f"[<<<] Received message from client: {message}", "blue")
             self.register_clients[layer_id - 1] += 1
 
             if self.register_clients == self.total_clients:
                 self.distribution()
+                self.set_up()
 
-                filepath = f'{self.model_name}_{self.data_name}.pth'
-                if os.path.exists(filepath):
-                    initial_sd = torch.load(filepath, weights_only=True)
-                else:
-                    initial_sd = {}
-                
-                # node[3] là out_cluster_id
-                unique_out_clusters = sorted(list(set(node[3] for node in self.list_clients))) # thứ tự 0 1 2
-                for o_idx in unique_out_clusters:
-                    self.out_cluster_models[o_idx] = copy.deepcopy(initial_sd)
+                self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
+                src.Log.print_with_color(f"Start training round {self.global_round - self.round + 1}", "yellow")
 
-                # Initialize Shuffled Out-cluster Order
-                self.out_cluster_order = unique_out_clusters
-                random.shuffle(self.out_cluster_order)
-                self.current_out_cluster_cursor = 0
-                self.current_out_cluster_idx = self.out_cluster_order[0]
+                self.count_notify = copy.deepcopy(self.info_cluster[0])
+                self.count_update = [x * 2 for x in self.info_cluster[0]]
+                self.in_params = [[[],[]] for _ in range(len(self.info_cluster[0]))]
+                self.in_sizes = [[[],[]] for _ in range(len(self.info_cluster[0]))]
 
-                src.Log.print_with_color(f"All clients connected. Shuffled Out-cluster order: {self.out_cluster_order}",
-                                         "green")
-                src.Log.print_with_color("Hierarchical structure initialized from predefined IDs.", "green")
-                self.server_logger.log_info(f"Start training round {self.global_round - self.round + 1}")
-                self.notify_clients(register=False)
+                src.Log.print_with_color(f"List out-cluster : {self.out_cluster_ids}", "yellow")
+                self.current_out_cluster = self.out_cluster_ids.pop(0)
+                src.Log.print_with_color(f"Start out-cluster {self.current_out_cluster}", "yellow")
+                self.notify_clients()
 
         elif action == "NOTIFY":
             src.Log.print_with_color(f"[<<<] Received message from client: {message}", "blue")
+            in_cluster = message["in_cluster_id"]
 
-            message_pause = {"action": "PAUSE",
-                             "message": "Pause training and please send your parameters",
-                             "parameters": None}
+            message = {"action": "PAUSE",
+                        "message": "Pause training and please send your parameters"}
 
-            node = next((n for n in self.list_clients if n[0] == str(client_id)), None)
-            if int(layer_id) > 1:
-                out_idx = self.current_out_cluster_idx
-                in_idx = node[2] if node else 0
-            elif node:
-                out_idx, in_idx = node[3], node[2]
-            else:
-                out_idx, in_idx = 0, 0
-
-            if out_idx == self.current_out_cluster_idx:
-                key = (out_idx, in_idx)
-                if key not in self.finished_clients_in_cluster:
-                    self.finished_clients_in_cluster[key] = 0
-                self.finished_clients_in_cluster[key] += 1
-
-                clients_in_cluster = [n[0] for n in self.list_clients if n[3] == out_idx and n[2] == in_idx and n[1] == 1]
-                if self.finished_clients_in_cluster[key] == len(clients_in_cluster):
-                    src.Log.print_with_color(f">>> In-cluster ({out_idx}, {in_idx}) finished. Requesting parameters.", "yellow")
-                    for cid in clients_in_cluster:
-                        self.send_to_response(cid, pickle.dumps(message_pause))
+            self.count_notify[in_cluster] -= 1
+            if self.count_notify[in_cluster] == 0:
+                src.Log.print_with_color(f"Received finish training notification clients from in cluster {in_cluster}.", "yellow")
+                for (client_id, layer_id, in_cluster_id , out_cluster_id, _, _) in self.list_clients:
+                    if (out_cluster_id == self.current_out_cluster or layer_id == 2) and (in_cluster_id == in_cluster):
+                        self.send_to_response(client_id, pickle.dumps(message))
 
         elif action == "UPDATE":
             data_message = message["message"]
             result = message["result"]
             model_state_dict = message["parameters"]
             client_size = message["size"]
+            in_cluster = message["in_cluster_id"]
 
+            if not result:
+                self.round_result = False
             src.Log.print_with_color(f"[<<<] Received message from {client_id}: {data_message}", "blue")
 
-            node = next((n for n in self.list_clients if n[0] == str(client_id)), None)
-            if layer_id > 1:
-                out_idx = self.current_out_cluster_idx
-                in_idx = node[2] if node else 0
-                #src.Log.print_with_color(f">>> Mapping Split Server {client_id} to active Out-cluster {out_idx}", "yellow")
-            elif node:
-                out_idx, in_idx = node[3], node[2]
-            else:
-                out_idx, in_idx = 0, 0
+            self.count_update[in_cluster] -= 1
+            self.in_params[in_cluster][layer_id - 1].append(model_state_dict)
+            self.in_sizes[in_cluster][layer_id - 1].append(client_size)
 
-            key = (out_idx, in_idx)
-            cid_str = str(client_id)
+            if self.count_update[in_cluster] == 0:
+                self.check_in_cluster.append(in_cluster)
 
-            if layer_id == 1:
-                if out_idx == self.current_out_cluster_idx:
-                    cluster_key = (layer_id, out_idx, in_idx)
-                    if cluster_key not in self.global_model_parameters:
-                        self.global_model_parameters[cluster_key] = []
-                        self.global_client_sizes[cluster_key] = []
+            if len(self.check_in_cluster) == len(self.info_cluster[self.current_out_cluster]):
+                avg_in_cluster = self.avg_in_clusters()
 
-                    self.global_model_parameters[cluster_key].append(model_state_dict)
-                    self.global_client_sizes[cluster_key].append(client_size)
+                for num, check in enumerate(self.check_in_cluster):
+                    alpha =  float(1 / (1 + num))
+                    self.global_model = self.fed_async_aggregate(self.global_model, avg_in_cluster[check], alpha)
+                    torch.save(self.global_model, f'{self.model_name}_{self.data_name}.pth')
 
-                    # số client ở layer 1 của cur_o_idx
-                    clients_in_cluster = [n[0] for n in self.list_clients if int(n[3]) == out_idx and int(n[2]) == in_idx and int(n[1]) == 1]
-                    total_in_cluster = len(clients_in_cluster)
+                if len(self.out_cluster_ids) == 0:
+                    if self.round_result:
+                        # Test
+                        if not get_val(self.model_name, self.data_name, self.global_model, self.logger):
+                            self.logger.log_warning("Training failed!")
+                            src.Log.print_with_color("Training failed!", "yellow")
+                            self.round = 0
+                        else:
+                            self.round -= 1
+                    else:
+                        self.round = 0
 
-                    # FedAvg khi in-cluster đã nhận đủ update từ tất cả client
-                    if len(self.global_model_parameters[cluster_key]) == total_in_cluster:
-                        src.Log.print_with_color(f">>> Sync In-cluster L1 FedAvg ({out_idx}, {in_idx})", "yellow")
-                        in_cluster_avg_sd = src.Utils.fedavg_state_dicts(self.global_model_parameters[cluster_key],
-                                                                         weights=self.global_client_sizes[cluster_key])
-                        self.global_model_parameters[cluster_key] = []
-                        self.global_client_sizes[cluster_key] = []
-                        self.finished_clients_in_cluster[(out_idx, in_idx)] = 0
+                    if self.round > 0:
+                        self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
 
-                        # Track thứ tự in-cluster đến
-                        if out_idx not in self.incluster_fedasync_order:
-                            self.incluster_fedasync_order[out_idx] = []
-                        order_list = self.incluster_fedasync_order[out_idx]
-                        order_list.append(in_idx)
+                        self.out_cluster_ids = list(range(self.num_cluster))
+                        random.shuffle(self.out_cluster_ids)
+                        self.global_model = None
+                        self.reset()
 
-                        alpha = 0.5 if len(order_list) == 1 else 0.25
-                        src.Log.print_with_color(f">>> In-cluster ({out_idx}, {in_idx}) arrived {'FIRST' if alpha == 0.5 else 'LATER'}. alpha={alpha}", "green")
+                        src.Log.print_with_color(f"List out-cluster : {self.out_cluster_ids}", "yellow")
+                        self.current_out_cluster = self.out_cluster_ids.pop(0)
+                        self.notify_clients(True, self.current_out_cluster)
+                        src.Log.print_with_color(f"Start out-cluster {self.current_out_cluster}", "yellow")
+                    else:
+                        self.logger.log_info("Stop training !!!")
+                        self.notify_clients(start=False)
+                        sys.exit()
+                else:
+                    self.reset()
 
-                        # Lưu L1 FedAvg result — CHƯA FedAsync, chờ L2
-                        self.incluster_l1_avg[(out_idx, in_idx)] = in_cluster_avg_sd
-
-                        # Gửi PAUSE cho L2 clients thuộc in-cluster này
-                        l2_clients_this_ic = [n for n in self.list_clients if int(n[1]) > 1 and int(n[2]) == in_idx]
-                        message_pause_l2 = {"action": "PAUSE", "message": f"Send L2 parameters for in-cluster {in_idx}.", "parameters": None}
-                        seen = set()
-                        for node in reversed(l2_clients_this_ic):
-                            role_key = (node[1], node[2], node[3], node[4])
-                            if role_key not in seen:
-                                seen.add(role_key)
-                                src.Log.print_with_color(f">>> Sending PAUSE to L2 client {node[0]} for in-cluster {in_idx}", "yellow")
-                                self.send_to_response(node[0], pickle.dumps(message_pause_l2))
+                    self.current_out_cluster = self.out_cluster_ids.pop(0)
+                    src.Log.print_with_color(f"Start out-cluster {self.current_out_cluster}", "yellow")
+                    self.notify_clients(True, self.current_out_cluster)
 
 
-            elif layer_id > 1:
-                # Accumulate L2 update per in-cluster
-                src.Log.print_with_color(f">>> Received UPDATE from Upper Layer client {client_id} (Layer {layer_id}, in-cluster {in_idx})", "yellow")
-                l2_key = (layer_id, out_idx, in_idx)
-                if l2_key not in self.global_model_parameters:
-                    self.global_model_parameters[l2_key] = []
-                    self.global_client_sizes[l2_key] = []
-                self.global_model_parameters[l2_key].append(model_state_dict)
-                self.global_client_sizes[l2_key].append(client_size)
+        ch.basic_ack(delivery_tag=method.delivery_tag)
 
-                # Đếm L2 per in-cluster
-                l2_ic_key = (out_idx, in_idx)
-                if l2_ic_key not in self.incluster_l2_finished:
-                    self.incluster_l2_finished[l2_ic_key] = 0
-                self.incluster_l2_finished[l2_ic_key] += 1
-
-                # Số L2 clients (unique roles) thuộc in-cluster này
-                total_upper_this_ic = len(set((n[1], n[2], n[3], n[4]) for n in self.list_clients if int(n[1]) > 1 and int(n[2]) == in_idx))
-
-                if self.incluster_l2_finished[l2_ic_key] >= total_upper_this_ic:
-                    # FedAvg L2
-                    avg_sd_l2 = src.Utils.fedavg_state_dicts(self.global_model_parameters[l2_key],
-                                                              weights=self.global_client_sizes[l2_key])
-                    self.global_model_parameters[l2_key] = []
-                    self.global_client_sizes[l2_key] = []
-
-                    # Merge L1 avg + L2 avg → full model
-                    l1_avg = self.incluster_l1_avg.pop(l2_ic_key, {})
-                    merged_sd = {}
-                    merged_sd.update(l1_avg)
-                    merged_sd.update(avg_sd_l2)
-
-                    # Lấy alpha theo thứ tự in-cluster đến
-                    order_list = self.incluster_fedasync_order.get(out_idx, [])
-                    arrival_pos = order_list.index(in_idx) if in_idx in order_list else 0
-                    alpha = 0.5 if arrival_pos == 0 else 0.25
-
-                    src.Log.print_with_color(f">>> In-cluster ({out_idx}, {in_idx}) L1+L2 merged. FedAsync alpha={alpha} (paper Alg.1)", "green")
-                    self.fedasync_aggregate(out_idx, merged_sd, alpha=alpha)
-
-                    self.check_out_cluster_completion(out_idx)
-
-    def check_out_cluster_completion(self, out_idx):
-        all_in_clusters = set(int(n[2]) for n in self.list_clients if int(n[1]) == 1 and int(n[3]) == out_idx)
-        order_list = self.incluster_fedasync_order.get(out_idx, [])
-
-        # Chưa đủ in-cluster hoàn thành
-        if all_in_clusters and len(order_list) < len(all_in_clusters):
-            return
-        # Kiểm tra L2 per in-cluster
-        for ic_idx in all_in_clusters:
-            l2_roles = len(set((n[1], n[2], n[3], n[4]) for n in self.list_clients if int(n[1]) > 1 and int(n[2]) == ic_idx))
-            if l2_roles > 0 and self.incluster_l2_finished.get((out_idx, ic_idx), 0) < l2_roles:
-                return
-
-        src.Log.print_with_color(f">>> Out-cluster {out_idx} FULLY completed (L1 & L2+).", "green")
-
-        # Validation
-        sd = self.out_cluster_models[out_idx]
-        if sd:
-            current_r = self.global_round - self.round + 1
-            elapsed_min = (time.time() - self.start_time) / 60
-            self.server_logger.log_info(f"Round {current_r} ({elapsed_min:.2f} min):")
-            get_val(self.model_name, self.data_name, sd, self.server_logger)
-
-        # Reset
-        self.incluster_fedasync_order[out_idx] = []
-        self.finished_upper_clients_count[out_idx] = 0
-        for ic_idx in all_in_clusters:
-            self.incluster_l2_finished.pop((out_idx, ic_idx), None)
-            self.incluster_l1_avg.pop((out_idx, ic_idx), None)
-
-        # Chuyển sang out-cluster tiếp
-        self.current_out_cluster_cursor += 1
-        if self.current_out_cluster_cursor >= len(self.out_cluster_order):
-            self.round -= 1
-            if self.round <= 0:
-                src.Log.print_with_color(">>> All global rounds completed.", "green")
-                torch.save(sd, f'{self.model_name}_{self.data_name}.pth')
-                src.Log.print_with_color(">>> Server training process total completion.", "green")
-                return
-            self.current_out_cluster_cursor = 0
-            random.shuffle(self.out_cluster_order)
-            src.Log.print_with_color(f">>> New Global Round. Shuffled order: {self.out_cluster_order}", "green")
-
-        next_out_idx = self.out_cluster_order[self.current_out_cluster_cursor]
-        #weight model outcluster tiếp
-        self.out_cluster_models[next_out_idx] = copy.deepcopy(self.out_cluster_models[out_idx])
-        self.current_out_cluster_idx = next_out_idx
-        src.Log.print_with_color(f">>> Moving to Out-cluster {next_out_idx}", "yellow")
-        self.notify_clients(register=False)
-
-    # FedAsync: W_new = (1-alpha)*W_old + alpha*W_received
-    def fedasync_aggregate(self, out_idx, in_cluster_sd, alpha=1.0):
-        target_sd = self.out_cluster_models[out_idx]
-        for key in in_cluster_sd.keys():
-            if key in target_sd:
-                target_sd[key] = (1.0 - alpha) * target_sd[key].float() + alpha * in_cluster_sd[key].float()
-                target_sd[key] = target_sd[key].to(in_cluster_sd[key].dtype)
-            else:
-                # Key chưa tồn tại (model khởi tạo rỗng) → thêm trực tiếp
-                target_sd[key] = in_cluster_sd[key].clone()
-        src.Log.print_with_color(f">>> FedAsync Out-cluster {out_idx} updated (alpha={alpha}).", "green")
-
-    def notify_clients(self, start=True, register=True):
-        if not start:
-            for node in self.list_clients:
-                self.send_to_response(node[0], pickle.dumps({"action": "STOP", "message": "Stop!", "parameters": None}))
-            return
-
-        o_idx = self.current_out_cluster_idx
-        full_sd = self.out_cluster_models[o_idx]
-        cut = int(self.list_cut_layers[0][0] if isinstance(self.list_cut_layers[0], list) else self.list_cut_layers[0])
-
-        # Dynamic model class lookup
-        model_name = self.model_name
-        data_name = self.data_name
-        
-        if model_name in ['Bert', 'BERT']:
-            klass = Bert_AGNEWS
-            
-        elif model_name == 'KWT':
-            klass = KWT_SPEECHCOMMANDS
+    def fed_async_aggregate(self, out_cluster_sd, in_cluster_sd, alpha=1.0):
+        if out_cluster_sd is None:
+            out_cluster_sd = in_cluster_sd
+            src.Log.print_with_color(f">>> FedAsync Out-cluster {self.current_out_cluster} updated (alpha={alpha}).", "green")
         else:
-            klass_name = f"{model_name}_{data_name}"
-            klass = globals().get(klass_name)
+            for key in in_cluster_sd.keys():
+                out_cluster_sd[key] = (1.0 - alpha) * out_cluster_sd[key].float() + alpha * in_cluster_sd[key].float()
+                out_cluster_sd[key] = out_cluster_sd[key].to(in_cluster_sd[key].dtype)
+            src.Log.print_with_color(f">>> FedAsync Out-cluster {self.current_out_cluster} updated (alpha={alpha}).", "green")
+        return out_cluster_sd
 
-        if klass is None:
-            self.server_logger.log_error(f"Model class for {model_name} and {data_name} not found.")
-            return
+    def notify_clients(self, start=True, out_id=0):
+        filepath = f'{self.model_name}_{self.data_name}.pth'
 
-        src.Log.print_with_color(f">>> Starting Training Round for Out-cluster {o_idx}...", "red")
+        for (client_id, layer_id, _, out_cluster_id, _, labels) in self.list_clients:
+            state_dict = None
+            if start:
+                if out_cluster_id == out_id or out_cluster_id == -1:
+                    if os.path.exists(filepath):
+                        self.full_state_dict = torch.load(filepath, weights_only=True)
 
-        # Notify active clients
-        for role in set(n[1:] for n in self.list_clients):
-            layer_id, in_idx, out_idx, idx = role
-            if not ((layer_id == 1 and out_idx == o_idx) or layer_id > 1):
-                continue
+                        if self.model_name == 'VGG16':
+                            klass = VGG16_CIFAR10
+                        elif self.model_name == "KWT":
+                            klass = KWT_SPEECHCOMMANDS
+                        else:
+                            klass = BERT_AGNEWS
 
-            client_id = next(n[0] for n in reversed(self.list_clients) if n[1:] == role)
-            layers = [0, cut] if layer_id == 1 else [cut, -1]
-            
-            # Initialize partial model to get correct state_dict keys
-            if klass == Bert_AGNEWS:
-                if layer_id == 1:
-                    model = klass(layer_id=1, n_block=cut)
+                        if layer_id == 1:
+                            model = klass(end_layer=self.cut_layer)
+                        else:
+                            model = klass(start_layer=self.cut_layer)
+                        state_dict = model.state_dict()
+                        keys = state_dict.keys()
+
+                        for key in keys:
+                            state_dict[key] = self.full_state_dict[key]
+
+                        src.Log.print_with_color(f"Load model successfully", "green")
+                    else:
+                        src.Log.print_with_color(f"File {filepath} does not exist.", "yellow")
+
+                    src.Log.print_with_color(f"[>>>] Sent start training request to client {client_id}", "red")
+
+                    response = {"action": "START",
+                                "message": "Server accept the connection!",
+                                "parameters": state_dict,
+                                "cut_layer": self.cut_layer,
+                                "model_name": self.model_name,
+                                "data_name": self.data_name,
+                                "learning": self.learning,
+                                "label_count": labels}
+                    self.send_to_response(client_id, pickle.dumps(response))
                 else:
-                    model = klass(layer_id=2, n_block=12 - cut)
+                    continue
             else:
-                if layer_id == 1:
-                    model = klass(end_layer=cut)
-                else:
-                    model = klass(start_layer=cut)
+                src.Log.print_with_color(f"[>>>] Sent stop training request to client {client_id}", "red")
+                response = {"action": "STOP",
+                            "message": "Stop training!"}
+                self.send_to_response(client_id, pickle.dumps(response))
 
-            state_dict = model.state_dict()
-            if len(full_sd) > 0:
-                for key in state_dict.keys():
-                    if key in full_sd:
-                        state_dict[key] = full_sd[key]
-                    elif layer_id == 2 and klass == Bert_AGNEWS:
-                        # Bert_AGNEWS layer 2 uses offset keys
-                        offset_key = f"bert.encoder.layer.{int(key.split('.')[3]) + cut}.{'.'.join(key.split('.')[4:])}" if "bert.encoder.layer" in key else key
-                        if offset_key in full_sd:
-                             state_dict[key] = full_sd[offset_key]
+    def set_up(self):
+        self.label_counts = self.label_counts.tolist()
+        new_list_client = []
+        for (client_id, layer_id, in_cluster_id, out_cluster_id, idx) in self.list_clients:
+            if layer_id == 1:
+                new_list_client.append((client_id, layer_id, in_cluster_id, out_cluster_id, idx, self.label_counts.pop(0)))
+            else:
+                new_list_client.append((client_id, layer_id, in_cluster_id, out_cluster_id, idx, []))
 
-            label = self.label_[idx] if (layer_id == 1 and self.label_) else []
-
-            response = {"action": "START", "message": "Training Start", "parameters": state_dict,
-                        "layers": layers, "model_name": self.model_name, "data_name": self.data_name,
-                        "batch_size": self.batch_size, "lr": self.lr, "momentum": self.momentum,
-                        "label_count": label, "local_round": self.local_round, "cluster": in_idx,
-                        "out_cluster_id": o_idx}
-
-            src.Log.print_with_color(f">>> Notifying client {client_id} (layer {layer_id}) for out-cluster {o_idx}, in-cluster {in_idx}", "yellow")
-            self.send_to_response(client_id, pickle.dumps(response))
+        self.list_clients = new_list_client
 
     def start(self):
         self.channel.start_consuming()
@@ -479,5 +302,25 @@ class Server:
         src.Log.print_with_color(f"[>>>] Sent notification to client {client_id}", "red")
         self.reply_channel.basic_publish(exchange='', routing_key=reply_queue_name, body=message)
 
+    def avg_in_clusters(self):
+        avg_in_cluster = []
 
+        for i in range(len(self.in_params)):
+            list_params = self.in_params[i]
+            list_sizes =  self.in_sizes[i]
+            full_dict = {}
 
+            for idx, layer_dict in enumerate(list_params):
+                sd = src.Utils.fedavg_state_dicts(layer_dict, list_sizes[idx])
+                full_dict.update(copy.deepcopy(sd))
+
+            avg_in_cluster.append(full_dict)
+
+        return avg_in_cluster
+
+    def reset(self):
+        self.check_in_cluster = []
+        self.count_notify = copy.deepcopy(self.info_cluster[0])
+        self.count_update = [x * 2 for x in self.info_cluster[0]]
+        self.in_params = [[[], []] for _ in range(len(self.info_cluster[0]))]
+        self.in_sizes = [[[], []] for _ in range(len(self.info_cluster[0]))]

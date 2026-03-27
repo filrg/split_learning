@@ -163,12 +163,14 @@ class BertClassifier(nn.Module):
         logits = self.classifier(pooled_output)
         return logits
 
-class Bert_AGNEWS(nn.Module):
-    def __init__( self, vocab_size=28996, hidden_size=768, num_attention_heads=12, intermediate_size=3072,
-        max_position_embeddings=512, type_vocab_size=2, dropout_prob=0.1, layer_id=0, n_block=12
-    ):
-        super(Bert_AGNEWS, self).__init__()
-        self.layer_id = layer_id
+
+class BERT_AGNEWS(nn.Module):
+    def __init__(self, vocab_size=28996, hidden_size=768, num_attention_heads=12, intermediate_size=3072,
+                 max_position_embeddings=512, type_vocab_size=2, dropout_prob=0.1, n_block=12,
+                 start_layer=0, end_layer=15):
+        super(BERT_AGNEWS, self).__init__()
+        self.start_layer = start_layer
+        self.end_layer = 15 if end_layer == -1 else end_layer
         self.config = DotDict(
             model_type="bert",
             vocab_size=vocab_size,
@@ -180,52 +182,38 @@ class Bert_AGNEWS(nn.Module):
             use_return_dict=True, output_attentions=False, output_hidden_states=False
         )
 
-        if self.layer_id == 1:
-            self.embeddings = BertEmbeddings(vocab_size=vocab_size, hidden_size=hidden_size, max_position_embeddings=max_position_embeddings,
-                                             type_vocab_size=type_vocab_size,dropout_prob=dropout_prob)
-            self.layers = nn.ModuleList(
-                [BertLayer(hidden_size, num_attention_heads, intermediate_size, dropout_prob)
-                 for _ in range(n_block)]
-            )
-        elif self.layer_id == 2:
-            self.layers = nn.ModuleList(
-                [BertLayer(hidden_size, num_attention_heads, intermediate_size, dropout_prob)
-                 for _ in range(n_block)]
-            )
-            self.pooler = BertPooler(hidden_size)
-            self.dropout = nn.Dropout(dropout_prob)
-            self.classifier = nn.Linear(hidden_size, 4)
-        else:
-            self.embeddings = BertEmbeddings(vocab_size=vocab_size, hidden_size=hidden_size,
-                                             max_position_embeddings=max_position_embeddings,
-                                             type_vocab_size=type_vocab_size, dropout_prob=dropout_prob)
-            self.layers = nn.ModuleList(
-                [BertLayer(hidden_size, num_attention_heads, intermediate_size, dropout_prob)
-                 for _ in range(n_block)]
-            )
-            self.pooler = BertPooler(hidden_size)
-            self.dropout = nn.Dropout(dropout_prob)
-            self.classifier = nn.Linear(hidden_size, 4)
+        if self.start_layer < 1 <= self.end_layer:
+            self.layer1 = BertEmbeddings(vocab_size=vocab_size, hidden_size=hidden_size,
+                                         max_position_embeddings=max_position_embeddings,
+                                         type_vocab_size=type_vocab_size, dropout_prob=dropout_prob)
 
-    def forward(self, input_ids, token_type_ids=None,**kwargs):
+        for i in range(12):
+            layer_idx = 2 + i
+            if self.start_layer < layer_idx <= self.end_layer:
+                setattr(self, f'layer{layer_idx}',
+                        BertLayer(hidden_size, num_attention_heads, intermediate_size, dropout_prob))
 
-        if self.layer_id == 1:
-            x = self.embeddings(input_ids, token_type_ids)
-            for encode in self.layers:
-                x = encode(x)
-        elif self.layer_id == 2:
-            x = input_ids
-            for encode in self.layers:
-                x = encode(x)
-            x = self.pooler(x)
-            x = self.dropout(x)
-            x = self.classifier(x)
-        else:
-            x = self.embeddings(input_ids, token_type_ids)
-            for encode in self.layers:
-                x = encode(x)
-            x = self.pooler(x)
-            x = self.dropout(x)
-            x = self.classifier(x)
+        if self.start_layer < 14 <= self.end_layer:
+            self.layer14 = BertPooler(hidden_size)
+
+        if self.start_layer < 15 <= self.end_layer:
+            self.layer15 = BertClassifier(hidden_size, 4)
+
+    def forward(self, input_ids=None, token_type_ids=None, **kwargs):
+        x = input_ids
+        if self.start_layer < 1 <= self.end_layer:
+            x = self.layer1(x, token_type_ids)
+
+        for i in range(12):
+            layer_idx = 2 + i
+            if self.start_layer < layer_idx <= self.end_layer:
+                layer_module = getattr(self, f'layer{layer_idx}')
+                x = layer_module(x)
+
+        if self.start_layer < 14 <= self.end_layer:
+            x = self.layer14(x)
+
+        if self.start_layer < 15 <= self.end_layer:
+            x = self.layer15(x)
 
         return x
