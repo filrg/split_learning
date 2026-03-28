@@ -15,11 +15,9 @@ class TransformerEncoderBlock(nn.Module):
         )
 
     def forward(self, x):
-        # Attention + residual
         _x = self.ln1(x)
         x_attn = self.mha(_x, _x, _x)[0]
         x = x + x_attn
-        # MLP + residual
         x_mlp = self.mlp(self.ln2(x))
         x = x + x_mlp
         return x
@@ -36,7 +34,6 @@ class KWT_SPEECHCOMMANDS(nn.Module):
         16: LayerNorm
         17: Classification head
     """
-    
     def __init__(self, start_layer=0, end_layer=17):
         super().__init__()
         self.start_layer = start_layer
@@ -47,7 +44,7 @@ class KWT_SPEECHCOMMANDS(nn.Module):
         embed_dim = 64
         num_heads = 1
         mlp_dim = 256
-        num_classes = 12
+        num_classes = 10
         dropout = 0.1
         
         # Layer 1: Linear embedding

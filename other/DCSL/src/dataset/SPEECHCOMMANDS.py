@@ -1,15 +1,13 @@
 import os
-import random
 import torch
 import numpy as np
 from torch.utils.data import Dataset
 from scipy.io import wavfile
 from scipy.fftpack import dct
 
-CLASSES = ['yes', 'no', 'up', 'down', 'left', 'right', 'on', 'off', 'stop', 'go', 'silence', 'unknown']
+CLASSES = ['yes', 'no', 'up', 'down', 'left', 'right', 'on', 'off', 'stop', 'go']
 
 def compute_mfcc(waveform, sample_rate=16000, n_mfcc=40, n_fft=480, hop_length=160, n_mels=40):
-    """Compute MFCC features using scipy (no torchaudio backend needed)"""
     emphasized = np.append(waveform[0], waveform[1:] - 0.97 * waveform[:-1])
 
     frame_length = n_fft
@@ -48,44 +46,14 @@ def compute_mfcc(waveform, sample_rate=16000, n_mfcc=40, n_fft=480, hop_length=1
     return mfcc.T
 
 
-def _load_background_noise(root):
-    """Load all background noise files from _background_noise_ directory"""
-    noise_dir = os.path.join(root, '_background_noise_')
-    noise_data = []
-    if not os.path.exists(noise_dir):
-        print(f"[WARNING] Background noise dir not found: {noise_dir}")
-        return noise_data
-
-    for f in os.listdir(noise_dir):
-        if not f.endswith('.wav'):
-            continue
-        fpath = os.path.join(noise_dir, f)
-        try:
-            sr, wav = wavfile.read(fpath)
-            if wav.dtype == np.int16:
-                wav = wav.astype(np.float32) / 32768.0
-            elif wav.dtype == np.int32:
-                wav = wav.astype(np.float32) / 2147483648.0
-            else:
-                wav = wav.astype(np.float32)
-            noise_data.append(wav)
-        except Exception as e:
-            print(f"[WARNING] Error reading noise file {fpath}: {e}")
-
-    print(f"Loaded {len(noise_data)} background noise files")
-    return noise_data
-
 class SpeechCommandsDataset(Dataset):
-    def __init__(self, root='./data', subset='training', n_silence=2300):
+    def __init__(self, root='./data', subset='training'):
         self.root = os.path.join(root, 'SpeechCommands', 'speech_commands_v0.02')
         self.subset = subset
         self.samples = []
-        self.noise_data = []
 
         if not os.path.exists(self.root):
             raise RuntimeError(f"Dataset not found at {self.root}. Please download manually.")
-
-        self.noise_data = _load_background_noise(self.root)
 
         val_list = set()
         test_list = set()
@@ -105,6 +73,9 @@ class SpeechCommandsDataset(Dataset):
             if not os.path.isdir(label_path) or label_dir.startswith('_'):
                 continue
 
+            if label_dir not in CLASSES:
+                continue
+
             for audio_file in os.listdir(label_path):
                 if not audio_file.endswith('.wav'):
                     continue
@@ -118,51 +89,27 @@ class SpeechCommandsDataset(Dataset):
                 elif subset == 'training' and rel_path not in val_list and rel_path not in test_list:
                     self.samples.append((os.path.join(label_path, audio_file), label_dir))
 
-        if self.noise_data:
-            if subset == 'training':
-                num_silence = n_silence
-            else:
-                num_silence = max(1, n_silence // 9)
 
-            for _ in range(num_silence):
-                self.samples.append((None, 'silence'))
-
-            print(f"Added {num_silence} silence samples from background noise")
 
         print(f"Total {len(self.samples)} samples for {subset}")
-
-    def _get_silence_waveform(self):
-        target_length = 16000
-        noise = random.choice(self.noise_data)
-
-        if len(noise) <= target_length:
-            waveform = np.pad(noise, (0, max(0, target_length - len(noise))))
-        else:
-            start = random.randint(0, len(noise) - target_length)
-            waveform = noise[start: start + target_length]
-
-        return waveform
 
     def __getitem__(self, idx):
         audio_path, label = self.samples[idx]
 
         try:
-            if audio_path is None:
-                waveform = self._get_silence_waveform()
+            sample_rate, waveform = wavfile.read(audio_path)
+            if waveform.dtype == np.int16:
+                waveform = waveform.astype(np.float32) / 32768.0
+            elif waveform.dtype == np.int32:
+                waveform = waveform.astype(np.float32) / 2147483648.0
             else:
-                sample_rate, waveform = wavfile.read(audio_path)
-                if waveform.dtype == np.int16:
-                    waveform = waveform.astype(np.float32) / 32768.0
-                elif waveform.dtype == np.int32:
-                    waveform = waveform.astype(np.float32) / 2147483648.0
-                else:
-                    waveform = waveform.astype(np.float32)
+                waveform = waveform.astype(np.float32)
 
-                target_length = 16000
-                if len(waveform) < target_length:
-                    waveform = np.pad(waveform, (0, target_length - len(waveform)))
-                else:
-                    waveform = waveform[:target_length]
+            target_length = 16000
+            if len(waveform) < target_length:
+                waveform = np.pad(waveform, (0, target_length - len(waveform)))
+            else:
+                waveform = waveform[:target_length]
 
             mfcc = compute_mfcc(waveform, sample_rate=16000, n_mfcc=40)
             mfcc = torch.tensor(mfcc, dtype=torch.float32)
@@ -171,11 +118,7 @@ class SpeechCommandsDataset(Dataset):
             print(f"[WARNING] Error processing sample {idx}: {e}, using zeros")
             mfcc = torch.zeros(40, 98, dtype=torch.float32)
 
-        if label in CLASSES:
-            label_idx = CLASSES.index(label)
-        else:
-            label_idx = CLASSES.index('unknown')
-            
+        label_idx = CLASSES.index(label)
         return mfcc, label_idx
         
     def __len__(self):
