@@ -6,9 +6,11 @@ import numpy as np
 import copy
 import src.Log
 import src.Utils
+import torch
 
-from src.model.Bert_EMOTION import Bert
-from src.model import *
+from src.model.BERT_AGNEWS import BERT_AGNEWS
+from src.model.KWT_SPEECHCOMMANDS import KWT_SPEECHCOMMANDS
+from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
 from src.val.get_val import get_val
 
 class Server:
@@ -22,26 +24,19 @@ class Server:
         self.model_name = config["server"]["model"]
         self.data_name = config["server"]["data-name"]
         self.total_clients = config["server"]["clients"]
-        self.list_cut_layers = config["server"]["cut-layers"]
-        self.num_cluster = config["server"]["num-cluster"]
         self.global_round = config["server"]["global-round"]
-        self.round = self.global_round
-        self.save_parameters = config["server"]["parameters"]["save"]
-        self.load_parameters = config["server"]["parameters"]["load"]
-        self.validation = config["server"]["validation"]
-
-        # Time training
-        self.config_time = config["server"]["limited-time"]
+        self.round = 1
+        self.t_g = config["server"]["t-g"]
+        self.t_c = config["server"]["t-c"]
+        self.num_cluster = config["server"]["num-cluster"]
+        self.cut_layer = config["server"]["cut-layer"]
 
         # Clients
-        self.batch_size = config["learning"]["batch-size"]
-        self.lr = config["learning"]["learning-rate"]
-        self.momentum = config["learning"]["momentum"]
-        self.control_count = config["learning"]["control-count"]
-        self.clip_grad_norm = config["learning"]["clip-grad-norm"]
+        self.learning = config["learning"]
         self.data_distribution = config["server"]["data-distribution"]
 
         # Data distribution
+        self.non_iid = self.data_distribution["non-iid"]
         self.num_label = self.data_distribution["num-label"]
         self.num_sample = self.data_distribution["num-sample"]
         self.label_counts = None
@@ -54,20 +49,22 @@ class Server:
         self.channel = self.connection.channel()
         self.channel.queue_declare(queue='rpc_queue')
 
-        self.current_clients = [0 for _ in range(len(self.total_clients))]
-        self.register_clients = [0 for _ in range(len(self.total_clients))]
-        self.first_layer_clients_in_each_cluster = []
+        self.current_clients = [0, 0]
+        self.register_clients = [0, 0]
+        self.check_client = 0
         self.responses = {}  # Save response
         self.list_clients = []
         self.round_result = True
+        self.full_state_dict = None
 
-        self.global_model_parameters = None
-        self.global_client_sizes = None
-        self.avg_state_dict = None
+        self.clients_avg = [{} for _ in range(self.num_cluster)]
+        self.clients_params = [[] for _ in range(self.num_cluster)]
+        self.clients_sizes = [[] for _ in range(self.num_cluster)]
 
-        self.size_data = None
+        self.edges_params = [{} for _ in range(self.num_cluster)]
+        self.edges_sizes = [None for _ in range(self.num_cluster)]
 
-        self.infor_cluster = config["server"]["infor-cluster"]
+        self.infor_cluster = [[0,0] for _ in range(self.num_cluster)]
 
         self.channel.basic_qos(prefetch_count=1)
         self.reply_channel = self.connection.channel()
@@ -75,33 +72,41 @@ class Server:
 
         debug_mode = config["debug_mode"]
         self.logger = src.Log.Logger(f"{log_path}/app.log", debug_mode)
-        # self.logger.log_info(f"Application start. Server is waiting for {self.total_clients} clients.")
+        self.logger.log_info(f"Application start. Server is waiting for {self.total_clients} clients.")
         src.Log.print_with_color(f"Application start. Server is waiting for {self.total_clients} clients.", "green")
 
     def distribution(self):
-        label_distribution = np.array([
-            [0.25, 0.25, 0.25, 0.25],
-            [0.25, 0.25, 0.25, 0.25],
-            [0.25, 0.25, 0.25, 0.25],
-            [0.25, 0.25, 0.25, 0.25]]
-        )
-        # label_distribution = np.array(
-        #     [[0.0, 0.0, 0.0, 0.0, 0.0, 0.09394938, 0.20495232, 0.25764745, 0.20563418, 0.23781668],
-        #      [0.0, 0.0, 0.0, 0.0, 0.0, 0.07172973, 0.24979451, 0.28449692, 0.17334935, 0.22062949],
-        #      [0.0, 0.0, 0.0, 0.0, 0.0, 0.35767604, 0.14840493, 0.24900655, 0.06997417, 0.17493831],
-        #      [0.2824181, 0.132361, 0.09816592, 0.16999675, 0.31705823, 0.0, 0.0, 0.0, 0.0, 0.0],
-        #      [0.25640487, 0.32848751, 0.08951943, 0.24333781, 0.08225038, 0.0, 0.0, 0.0, 0.0, 0.0],
-        #      [0.19780106, 0.31160452, 0.23068388, 0.11227246, 0.14763808, 0.0, 0.0, 0.0, 0.0, 0.0],
-        #      [0.08073514, 0.13786255, 0.06125086, 0.08391925, 0.04435898, 0.0445482, 0.07578602, 0.18663911, 0.20118637,
-        #       0.08371351],
-        #      [0.14757221, 0.05964236, 0.06489429, 0.16269761, 0.11871837, 0.0630334, 0.07481413, 0.0249723, 0.10654056,
-        #       0.17711471],
-        #      [0.12532717, 0.05295416, 0.10434852, 0.07494715, 0.12291418, 0.0860416, 0.08839187, 0.07168553, 0.20919395,
-        #       0.06419587],
-        #      ])
+        if self.non_iid:
+            # Bert
+            label_distribution = np.array([
+                [0.75, 0.0, 0.0, 0.25],
+                [0.0, 0.75, 0.0, 0.25],
+                [0.75, 0.0, 0.0, 0.25],
+                [0.0, 0.75, 0.0, 0.25],
+                [0.0, 0.0, 0.75, 0.25],
+                [0.0, 0.75, 0.0, 0.25],
+                [0.0, 0.0, 0.75, 0.25],
+                [0.75, 0.0, 0.0, 0.25],
+                [0.0, 0.0, 0.75, 0.25],]
+            )
 
-        self.label_counts = (label_distribution * self.num_sample).astype(int)
+            # VGG16
+            # label_distribution = np.array([
+            #     [0.1376, 0.0589, 0.2163, 0.2322, 0.0163, 0.0417, 0.1706, 0.0845, 0.0300, 0.0128],
+            #     [0.0036, 0.0046, 0.1981, 0.0632, 0.1970, 0.1301, 0.1275, 0.0384, 0.2076, 0.0288],
+            #     [0.2172, 0.0002, 0.0328, 0.0597, 0.0733, 0.2204, 0.0000, 0.3430, 0.0489, 0.0050],
+            #     [0.0404, 0.2284, 0.1779, 0.0074, 0.0567, 0.0257, 0.0263, 0.0237, 0.1306, 0.2830],
+            #     [0.0142, 0.0838, 0.0240, 0.1238, 0.0046, 0.3854, 0.0094, 0.1984, 0.0868, 0.0690],
+            #     [0.1417, 0.0446, 0.0137, 0.2550, 0.0164, 0.0559, 0.0004, 0.0666, 0.3834, 0.0247],
+            #     [0.0038, 0.1174, 0.3174, 0.1164, 0.1699, 0.0587, 0.1382, 0.0747, 0.0032, 0.0000],
+            #     [0.1713, 0.1041, 0.0189, 0.0213, 0.0000, 0.1449, 0.2591, 0.1255, 0.1427, 0.0070],
+            #     [0.0004, 0.0171, 0.0764, 0.0000, 0.0762, 0.1191, 0.1538, 0.1362, 0.0002, 0.4206]
+            # ])
 
+            # SPEEDCOMMANDS
+            self.label_counts = (label_distribution * self.num_sample).astype(int)
+        else:
+            self.label_counts = np.full((self.total_clients[0], self.num_label), self.num_sample // self.num_label)
 
     def on_request(self, ch, method, props, body):
         message = pickle.loads(body)
@@ -112,100 +117,109 @@ class Server:
         self.responses[routing_key] = message
 
         if action == "REGISTER":
-            cluster =  message['cluster']
-            performance = message['performance']
-            exe_time = message['exe_time']
-            net = message['net']
-            size_data = message['size_data']
-            if self.size_data is None:
-                self.size_data = size_data
+            cluster = message['cluster']
+            select = message['select']
 
-            if (str(client_id), layer_id, performance, cluster, exe_time, net) not in self.list_clients:
-                self.list_clients.append((str(client_id), layer_id, performance, cluster, exe_time, net))
+            if (str(client_id), layer_id, cluster, select) not in self.list_clients:
+                self.list_clients.append((str(client_id), layer_id, cluster, select))
 
             src.Log.print_with_color(f"[<<<] Received message from client: {message}", "blue")
-            # Save messages from clients
+
             self.register_clients[layer_id - 1] += 1
 
-            # If consumed all clients - Register for first time
             if self.register_clients == self.total_clients:
                 src.Log.print_with_color("All clients are connected. Sending notifications.", "green")
 
                 self.distribution()
                 self.cluster_and_selection()
-                src.Log.print_with_color(f'List cut point: {self.list_cut_layers}', 'yellow')
+                src.Log.print_with_color(f'List cut point: {self.cut_layer}', 'yellow')
                 src.Log.print_with_color(f'Infor clusters: {self.infor_cluster}', 'yellow')
 
-                self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
+                self.logger.log_info(f"Start training global round {self.round}")
                 self.notify_clients()
 
         elif action == "NOTIFY":
-            cluster = message["cluster"]
             src.Log.print_with_color("[<<<] Received message from client: {message}", "blue")
-            message = {"action": "PAUSE",
-                       "message": "Pause training and please send your parameters",
-                       "parameters": None}
-            if layer_id == 1:
-                self.first_layer_clients_in_each_cluster[cluster] += 1
 
-            if self.first_layer_clients_in_each_cluster[cluster] == self.infor_cluster[cluster][0]:
-                self.first_layer_clients_in_each_cluster[cluster] = 0
-                src.Log.print_with_color(f"Received finish training notification cluster {cluster}", "yellow")
+            self.check_client += 1
 
-                for (client_id, layer_id, _, clustering, _, _ ,_) in self.list_clients:
-                    if clustering == cluster:
-                        self.send_to_response(client_id, pickle.dumps(message))
+            if self.check_client == self.total_clients[0]:
+                self.check_client = 0
+                src.Log.print_with_color(f"Received finish training notification all clients.", "yellow")
+                client_send = self.round % self.t_c == 0
+                edge_send = self.round % self.t_g == 0
+
+                for (client_id, layer_id, _, _) in self.list_clients:
+                    if layer_id == 1:
+                        message = {"action": "PAUSE", "send": client_send}
+                    else:
+                        message = {"action": "PAUSE", "send": edge_send}
+                    self.send_to_response(client_id, pickle.dumps(message))
 
         elif action == "UPDATE":
-            # self.distribution()
             data_message = message["message"]
             result = message["result"]
-            src.Log.print_with_color(f"[<<<] Received message from {client_id}: {data_message}", "blue")
             cluster = message["cluster"]
-            # Global update
+            src.Log.print_with_color(f"[<<<] Received message from {client_id}: {data_message}, cluster: {cluster}", "blue")
 
             self.current_clients[layer_id - 1] += 1
             if not result:
                 self.round_result = False
 
-            # Save client's model parameters
-            if self.save_parameters and self.round_result:
+            if self.round_result:
                 model_state_dict = message["parameters"]
                 client_size = message["size"]
-                self.global_model_parameters[cluster][layer_id - 1].append(model_state_dict)
-                self.global_client_sizes[cluster][layer_id - 1].append(client_size)
+                if layer_id == 1:
+                    self.clients_params[cluster].append(model_state_dict)
+                    self.clients_sizes[cluster].append(client_size)
+                else:
+                    self.edges_params[cluster] = model_state_dict
+                    self.edges_sizes[cluster] = client_size
 
             # If consumed all client's parameters
             if self.current_clients == self.total_clients:
                 src.Log.print_with_color("Collected all parameters.", "yellow")
-                if self.save_parameters and self.round_result:
-                    for i in range(0, self.num_cluster):
-                        self.avg_all_parameters(i)
-                        self.global_model_parameters[i] = [[] for _ in range(len(self.total_clients))]
-                        self.global_client_sizes[i] = [[] for _ in range(len(self.total_clients))]
-                self.current_clients = [0 for _ in range(len(self.total_clients))]
-                # Test
-                if self.save_parameters and self.validation and self.round_result:
-                    state_dict_full = self.concatenate_and_avg_clusters()
-                    self.avg_state_dict = [[] for _ in range(self.num_cluster)]
-                    if not get_val(self.model_name, self.data_name, state_dict_full,self.logger):
-                        self.logger.log_warning("Training failed!")
-                    else:
-                        # Save to files
-                        torch.save(state_dict_full, f'{self.model_name}_{self.data_name}.pth')
-                        self.round -= 1
+                if self.round_result:
+                    if self.round % self.t_c == 0:
+
+                        for idx in range(self.num_cluster):
+                            src.Log.print_with_color(f"Avg client params cluster {idx}", "yellow")
+                            state_dict = src.Utils.fedavg_state_dicts(self.clients_params[idx], self.clients_sizes[idx])
+                            self.clients_avg[idx] = state_dict
+
+                    if self.round % self.t_g == 0:
+                        self.concatenate()
+
+                        if not get_val(self.model_name, self.data_name, self.full_state_dict, self.logger):
+                            self.logger.log_warning("Validation failed!")
+                            self.round = self.global_round + 1
+                        else:
+                            torch.save(self.full_state_dict, f'{self.model_name}_{self.data_name}.pth')
+
+                    self.round += 1
+                    self.current_clients = [0, 0]
+
+                    self.clients_params = [[] for _ in range(self.num_cluster)]
+                    self.clients_sizes = [[] for _ in range(self.num_cluster)]
+
+                    self.edges_params = [{} for _ in range(self.num_cluster)]
+                    self.edges_sizes = [None for _ in range(self.num_cluster)]
+
                 else:
-                    self.round -= 1
+                    self.round = self.global_round + 1
 
                 # Start a new training round
                 self.round_result = True
 
-                if self.round > 0:
-                    self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
-                    if self.save_parameters:
+                if self.round <= self. global_round:
+                    self.logger.log_info(f"Start training round {self.round}")
+                    if self.round % self.t_g == 0:
                         self.notify_clients()
+                    elif self.round % self.t_c == 0:
+
+                        self.notify_clients(subround=True,update=True)
                     else:
-                        self.notify_clients(register=False)
+                        self.notify_clients(subround=True,update=False)
                 else:
                     self.logger.log_info("Stop training !!!")
                     self.notify_clients(start=False)
@@ -213,85 +227,52 @@ class Server:
 
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
-    def notify_clients(self, start=True, register=True):
-        # Send message to clients when consumed all clients
-        for (client_id, layer_id, _, cluster, _, _, label) in self.list_clients:
-            # Read parameters file
+
+    def notify_clients(self, start=True, subround=False, update=False):
+        for (client_id, layer_id, cluster, label) in self.list_clients:
             filepath = f'{self.model_name}_{self.data_name}.pth'
             state_dict = None
 
             if start:
-                if layer_id == 1:
-                    layers = [0, self.list_cut_layers[cluster][0]]
-                elif layer_id == len(self.total_clients):
-                    layers = [self.list_cut_layers[cluster][-1], -1]
+                if subround:
+                    if update:
+                        if client_id == 1:
+                            state_dict = self.clients_avg[cluster]
                 else:
-                    layers = [self.list_cut_layers[cluster][layer_id - 2],
-                              self.list_cut_layers[cluster][layer_id - 1]]
-
-                if self.load_parameters and register:
                     if os.path.exists(filepath):
-                        full_state_dict = torch.load(filepath, weights_only=True)
+                        self.full_state_dict = torch.load(filepath, weights_only=True)
 
-                        if self.model_name != 'Bert':
-                            klass = globals()[f'{self.model_name}_{self.data_name}']
-                            if layer_id == 1:
-                                if layers == [0, 0]:
-                                    model = klass()
-                                else:
-                                    model = klass(end_layer=layers[1])
-                            elif layer_id == len(self.total_clients):
-                                model = klass(start_layer=layers[0])
-                            else:
-                                model = klass(start_layer=layers[0], end_layer=layers[1])
-                            state_dict = model.state_dict()
-                            keys = state_dict.keys()
-
-                            for key in keys:
-                                state_dict[key] = full_state_dict[key]
-
+                        if self.model_name == 'VGG16':
+                            klass = VGG16_CIFAR10
+                        elif self.model_name == "KWT":
+                            klass = KWT_SPEECHCOMMANDS
                         else:
-                            klass = Bert
-                            if layer_id == 1:
-                                model = klass(layer_id=1, n_block=layers[1])
-                                state_dict = model.state_dict()
-                                keys = state_dict.keys()
+                            klass = BERT_AGNEWS
 
-                                for key in keys:
-                                    state_dict[key] = full_state_dict[key]
-                            else:
-                                model = klass(layer_id=2, n_block=12 - layers[0])
-                                state_dict = model.state_dict()
-                                state_dict = src.Utils.change_keys(state_dict, layers[0], True)
-                                keys = state_dict.keys()
+                        if layer_id == 1:
+                            model = klass(end_layer=self.cut_layer[cluster])
+                        else:
+                            model = klass(start_layer=self.cut_layer[cluster])
+                        state_dict = model.state_dict()
+                        keys = state_dict.keys()
 
-                                for key in keys:
-                                    state_dict[key] = full_state_dict[key]
+                        for key in keys:
+                            state_dict[key] = self.full_state_dict[key]
 
-                                state_dict = src.Utils.change_keys(state_dict, layers[0], False)
-
-                            src.Log.print_with_color(f"Load pretrain model successfully", "green")
-
-
+                        src.Log.print_with_color(f"Load model successfully", "green")
                     else:
                         self.logger.log_info(f"File {filepath} does not exist.")
 
                 src.Log.print_with_color(f"[>>>] Sent start training request to client {client_id}", "red")
                 response = {"action": "START",
                             "message": "Server accept the connection!",
-                            "parameters": copy.deepcopy(state_dict),
-                            "num_layers": len(self.total_clients),
-                            "layers": layers,
+                            "parameters": state_dict,
+                            "cut_layer": self.cut_layer[cluster],
                             "model_name": self.model_name,
                             "data_name": self.data_name,
-                            "control_count": self.control_count,
-                            "batch_size": self.batch_size,
-                            "lr": self.lr,
-                            "momentum": self.momentum,
-                            "clip_grad_norm": self.clip_grad_norm,
+                            "learning": self.learning,
                             "label_count": label,
-                            "cluster": cluster,
-                            "config_time": self.config_time}
+                            "cluster": cluster}
                 self.send_to_response(client_id, pickle.dumps(response))
             else:
                 src.Log.print_with_color(f"[>>>] Sent stop training request to client {client_id}", "red")
@@ -302,17 +283,20 @@ class Server:
 
     def cluster_and_selection(self):
         self.label_counts = self.label_counts.tolist()
-        for idx, (client_id, layer_id, performance, cluster, exe_time, net) in enumerate(self.list_clients):
+        new_list_client = []
+        for idx, (client_id, layer_id, cluster, select) in enumerate(self.list_clients):
             if layer_id == 1:
-                self.list_clients[idx] = (
-                client_id, layer_id, performance, cluster, exe_time, net, self.label_counts.pop())
+                if select:
+                    new_list_client.append((client_id, layer_id, cluster, self.label_counts.pop(0)))
+                    self.infor_cluster[cluster][0] += 1
+                else:
+                    self.label_counts.pop(0)
+                    self.total_clients[0] -= 1
             else:
-                self.list_clients[idx] = (client_id, layer_id, performance, cluster, exe_time, net, [])
+                new_list_client.append((client_id, layer_id, cluster, []))
+                self.infor_cluster[cluster][1] += 1
 
-        self.global_model_parameters = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
-        self.global_client_sizes = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
-        self.avg_state_dict = [[] for _ in range(self.num_cluster)]
-        self.first_layer_clients_in_each_cluster = [0 for _ in range(self.num_cluster)]
+        self.list_clients = new_list_client
 
     def start(self):
         self.channel.start_consuming()
@@ -328,48 +312,12 @@ class Server:
             body=message
         )
 
-    def avg_all_parameters(self, cluster: int):
-        layer_sizes = self.global_client_sizes[cluster]
-        layer_params = self.global_model_parameters[cluster]
-
-        for layer_idx, list_state_dicts in enumerate(layer_params):
-            list_sizes = layer_sizes[layer_idx]
-            if not list_state_dicts or not list_sizes:
-                self.avg_state_dict[cluster].append({})
-                continue
-            avg_sd = src.Utils.fedavg_state_dicts(list_state_dicts, weights=list_sizes)
-            self.avg_state_dict[cluster].append(avg_sd)
-
-    def concatenate_and_avg_clusters(self):
-        cluster_state_dicts = []
-
-        for c in range(self.num_cluster):
-            avg_layers = self.avg_state_dict[c] or []
-            if not avg_layers:
-                print(f"Warning: cluster {c} has no averaged layers, skipping.")
-                continue
-
+    def concatenate(self):
+        list_state_dict = []
+        for idx in range(self.num_cluster):
             full_dict = {}
-            if self.list_cut_layers[c][0] != 0:
-                for idx, layer_dict in enumerate(avg_layers):
-                    if idx == 0:
-                        sd = layer_dict
-                        full_dict.update(copy.deepcopy(sd))
-                    else:
-                        if self.model_name == 'Bert':
-                            sd = src.Utils.change_keys(layer_dict, self.list_cut_layers[c][0], True)
-                        else:
-                            sd = layer_dict
-                        full_dict.update(copy.deepcopy(sd))
-            else:
-                full_dict.update(copy.deepcopy(avg_layers[0]))
+            full_dict.update(copy.deepcopy(self.clients_avg[idx]))
+            full_dict.update(copy.deepcopy(self.edges_params[idx]))
+            list_state_dict.append(full_dict)
 
-            cluster_state_dicts.append(full_dict)
-
-        if not cluster_state_dicts:
-            raise RuntimeError("There is no cluster to merge and average.")
-
-        global_state = src.Utils.fedavg_state_dicts(cluster_state_dicts)
-
-        return global_state
-
+        self.full_state_dict = src.Utils.fedavg_state_dicts(list_state_dict)

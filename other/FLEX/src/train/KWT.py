@@ -8,7 +8,9 @@ import torch.nn as nn
 
 import src.Log
 
-class Train_VGG16:
+
+class Train_KWT:
+
     def __init__(self, client_id, layer_id, channel, device):
         self.client_id = client_id
         self.layer_id = layer_id
@@ -16,20 +18,18 @@ class Train_VGG16:
         self.device = device
         self.data_count = 0
 
-    def send_intermediate_output(self, output, labels, trace, test=False, cluster=None):
+    def send_intermediate_output(self, output, labels, trace, cluster=None):
         forward_queue_name = f'intermediate_queue_{self.layer_id}_{cluster}'
         self.channel.queue_declare(forward_queue_name, durable=False)
 
         if trace:
             trace.append(self.client_id)
             message = pickle.dumps(
-                {"data": output.detach().cpu().numpy(), "label": labels, "trace": trace,
-                 "test": test}
+                {"data": output.detach().cpu().numpy(), "label": labels, "trace": trace}
             )
         else:
             message = pickle.dumps(
-                {"data": output.detach().cpu().numpy(), "label": labels, "trace": [self.client_id],
-                 "test": test}
+                {"data": output.detach().cpu().numpy(), "label": labels, "trace": [self.client_id]}
             )
 
         self.channel.basic_publish(
@@ -60,7 +60,12 @@ class Train_VGG16:
                                    body=pickle.dumps(message))
 
     def train_on_first_layer(self, model, learning, train_loader=None, cluster=None):
-        optimizer = optim.SGD(model.parameters(), lr=learning["learning-rate"], momentum=learning["momentum"])
+        optimizer = optim.AdamW(model.parameters(), lr=learning["learning-rate"], weight_decay=learning["weight-decay"])
+
+        backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
+        self.channel.queue_declare(queue=backward_queue_name, durable=False)
+        self.channel.basic_qos(prefetch_count=1)
+        model.to(self.device)
 
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
         self.channel.queue_declare(queue=backward_queue_name, durable=False)
@@ -77,7 +82,7 @@ class Train_VGG16:
 
             self.data_count += 1
 
-            self.send_intermediate_output(intermediate_output, labels, trace=None, test=False, cluster=cluster)
+            self.send_intermediate_output(intermediate_output, labels, trace=None, cluster=cluster)
 
             while True:
                 method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
@@ -95,7 +100,7 @@ class Train_VGG16:
                     time.sleep(0.5)
 
         notify_data = {"action": "NOTIFY", "client_id": self.client_id, "layer_id": self.layer_id,
-                        "message": "Finish training!"}
+                       "message": "Finish training!", "cluster": cluster}
 
         src.Log.print_with_color("[>>>] Finish training!", "red")
         self.send_to_server(notify_data)
@@ -107,11 +112,11 @@ class Train_VGG16:
                 received_data = pickle.loads(body)
                 src.Log.print_with_color(f"[<<<] Received message from server {received_data}", "blue")
                 if received_data["action"] == "PAUSE":
-                    return True , self.data_count, received_data["send"]
+                    return True, self.data_count, received_data["send"]
             time.sleep(0.5)
 
     def train_on_last_layer(self, model, learning, cluster):
-        optimizer = optim.SGD(model.parameters(), lr=learning["learning-rate"], momentum=learning["momentum"])
+        optimizer = optim.AdamW(model.parameters(), lr=learning["learning-rate"], weight_decay=learning["weight-decay"])
         result = True
 
         criterion = nn.CrossEntropyLoss()
@@ -125,6 +130,7 @@ class Train_VGG16:
         while True:
             model.train()
             optimizer.zero_grad()
+
             method_frame, header_frame, body = self.channel.basic_get(queue=forward_queue_name, auto_ack=True)
             if method_frame and body:
                 received_data = pickle.loads(body)
@@ -148,7 +154,6 @@ class Train_VGG16:
                 self.data_count += 1
                 gradient = intermediate_output.grad
                 self.send_gradient(gradient, trace)
-
             else:
                 broadcast_queue_name = f'reply_{self.client_id}'
                 method_frame, header_frame, body = self.channel.basic_get(queue=broadcast_queue_name, auto_ack=True)

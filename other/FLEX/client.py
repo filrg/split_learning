@@ -1,9 +1,7 @@
-import json
 import pika
 import uuid
 import argparse
 import yaml
-import os
 
 import torch
 
@@ -13,7 +11,8 @@ from src.RpcClient import RpcClient
 parser = argparse.ArgumentParser(description="Split learning framework")
 parser.add_argument('--layer_id', type=int, required=True, help='ID of layer, start from 1')
 parser.add_argument('--device', type=str, required=False, help='Device of client')
-parser.add_argument('--cluster', type=int, required=False, help='ID cluster by device')
+parser.add_argument('--c', type=int, required=True, help='ID cluster by device')
+parser.add_argument('--s', action='store_true', help='Select/Reject device')
 
 args = parser.parse_args()
 
@@ -42,28 +41,13 @@ credentials = pika.PlainCredentials(username, password)
 connection = pika.BlockingConnection(pika.ConnectionParameters(address, 5672, f'{virtual_host}', credentials))
 channel = connection.channel()
 
-if args.cluster is None:
-    cluster = -1
-else:
-    cluster = args.cluster
-
 if __name__ == "__main__":
     src.Log.print_with_color("[>>>] Client sending registration message to server...", "red")
-    if os.path.exists("profiling.json"):
-        src.Log.print_with_color(f"Exists profiling.json.", 'green')
-        with open("profiling.json","r", encoding='utf-8') as file:
-            loaded_data = json.load(file)
 
-        performance = loaded_data["training speed"]
-        exe_time = loaded_data["execute training time"]
-        net = loaded_data["network"]
-        size_data = loaded_data["list of data size"]
-
-        data = {"action": "REGISTER", "client_id": client_id, "layer_id": args.layer_id, "performance": performance ,"cluster": cluster, "exe_time": exe_time, "net": net, "size_data": size_data, "message": "Hello from Client!"}
-        client = RpcClient(client_id, args.layer_id, channel, device)
-        client.send_to_server(data)
+    data = {"action": "REGISTER", "client_id": client_id, "layer_id": args.layer_id, "cluster": args.c, "select": args.s, "message": "Hello from Client!"}
+    client = RpcClient(client_id, args.layer_id, channel, device)
+    client.send_to_server(data)
+    if args.s:
         client.wait_response()
     else:
-        src.Log.print_with_color("[>>>] Profiling file is not existing, break", "yellow")
-
-
+        src.Log.print_with_color("Rejected !", "yellow")
