@@ -1,0 +1,34 @@
+name: Split Learning
+server:
+  global-round: 1
+  clients:
+    - 9
+    - 3
+  num-cluster: 3
+  cut-layer: 2
+  info-cluster:
+    - [2,1]
+    - [2,1]
+    - [2,1]
+  model: BERT
+  data-name: AGNEWS
+  data-distribution:
+    non-iid: False
+    num-sample: 500
+    num-label: 4
+  random-seed: 1
+
+rabbit:
+  address: 127.0.0.1
+  username: admin
+  password: admin
+  virtual-host: /
+
+log_path: .
+debug_mode: True
+
+learning:
+  learning-rate: 0.00005
+  weight-decay : 0.01
+  momentum: 0.5
+  batch-size: 4
