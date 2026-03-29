@@ -91,19 +91,14 @@ def CIFAR10(batch_size=None, distribution=None, train=True):
         return test_loader
 
 def SPEECHCOMMANDS(batch_size=None, distribution=None, train=True):
-    """Google Speech Commands V2 dataset loader for KWT model"""
     if train:
         dataset = SpeechCommandsDataset(root='./data', subset='training')
 
         if distribution is not None:
-            # Build label index from samples list directly (avoid reading wav files)
             from src.dataset.SPEECHCOMMANDS import CLASSES
             label_to_indices = defaultdict(list)
             for idx, (audio_path, label_name) in enumerate(dataset.samples):
-                if label_name in CLASSES:
-                    label_idx = CLASSES.index(label_name)
-                else:
-                    label_idx = CLASSES.index('unknown')
+                label_idx = CLASSES.index(label_name)
                 label_to_indices[label_idx].append(idx)
 
             selected_indices = []

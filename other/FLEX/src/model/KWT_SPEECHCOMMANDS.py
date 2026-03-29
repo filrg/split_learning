@@ -34,7 +34,7 @@ class KWT_SPEECHCOMMANDS(nn.Module):
         embed_dim = 64
         num_heads = 1
         mlp_dim = 256
-        num_classes = 12
+        num_classes = 10
         dropout = 0.1
 
         if self.start_layer < 1 <= self.end_layer:
