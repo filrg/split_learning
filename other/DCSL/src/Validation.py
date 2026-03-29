@@ -1,33 +1,14 @@
-
 import numpy as np
 import math
 from tqdm import tqdm
 
-import torchvision
-import torchvision.transforms as transforms
-import torch.nn as nn
-
+from src.dataset.dataloader import data_loader
 from src.model import *
 
-def test(model_name, data_name, state_dict_full, logger):
+def test(model_name, data_name, state_dict_full, logger, server_connection=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if data_name == "MNIST":
-        transform_test = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.5,), (0.5,))
-        ])
-        testset = torchvision.datasets.MNIST(root='./data', train=False, download=True, transform=transform_test)
 
-    elif data_name == "CIFAR10":
-        transform_test = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-        ])
-        testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
-    else:
-        raise ValueError(f"Data name '{data_name}' is not valid.")
-
-    test_loader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=2)
+    test_loader = data_loader(data_name=data_name, train=False)
 
     criterion = nn.CrossEntropyLoss()
 
@@ -47,15 +28,28 @@ def test(model_name, data_name, state_dict_full, logger):
     total = 0
 
     with torch.no_grad():
-        for data, target in tqdm(test_loader):
-            data = data.to(device)
-            target = target.to(device)
-            output = model(data)
+        for i, batch in enumerate(tqdm(test_loader)):
+            if isinstance(batch, dict) and 'input_ids' in batch:
+                data = batch['input_ids'].to(device)
+                target = batch['labels'].to(device)
+                output = model(data, attention_mask=batch['attention_mask'].to(device))
+            else:
+                data, target = batch
+                data = data.to(device)
+                target = target.to(device)
+                output = model(data)
+                
             loss = criterion(output, target)
             test_loss += loss.item() * target.size(0)
             pred = output.argmax(dim=1)
             correct += pred.eq(target).sum().item()
             total += target.size(0)
+            
+            if server_connection is not None and i % 5 == 0:
+                try:
+                    server_connection.process_data_events(time_limit=0)
+                except Exception:
+                    pass
 
     test_loss /= total
     accuracy = 100.0 * correct / total

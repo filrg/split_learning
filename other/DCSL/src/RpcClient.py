@@ -1,15 +1,13 @@
 import time
 import pickle
-import random
 import copy
-import torchvision
-import torchvision.transforms as transforms
-
-from collections import defaultdict
-from tqdm import tqdm
 
 import src.Log
+
 from src.model import *
+from src.dataset.dataloader import data_loader
+
+from peft import LoraConfig, get_peft_model
 
 
 class RpcClient:
@@ -22,7 +20,9 @@ class RpcClient:
 
         self.response = None
         self.model = None
+        self.train_loader = None
         self.label_count = None
+        self.peft_config = None
 
         self.train_set = None
         self.label_to_indices = None
@@ -56,34 +56,6 @@ class RpcClient:
             if self.label_count is not None:
                 src.Log.print_with_color(f"Label distribution of client: {self.label_count}", "yellow")
 
-            # Load training dataset
-            if self.layer_id == 1 and data_name and not self.train_set and not self.label_to_indices:
-                if data_name == "MNIST":
-                    transform_train = transforms.Compose([
-                        transforms.ToTensor(),
-                        transforms.Normalize((0.5,), (0.5,))
-                    ])
-                    self.train_set = torchvision.datasets.MNIST(root='./data', train=True, download=True,
-                                                                transform=transform_train)
-
-                elif data_name == "CIFAR10":
-                    transform_train = transforms.Compose([
-                        transforms.RandomCrop(32, padding=4),
-                        transforms.RandomHorizontalFlip(),
-                        transforms.ToTensor(),
-                        transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-                    ])
-                    self.train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True,
-                                                                  transform=transform_train)
-                else:
-                    self.train_set = None
-                    raise ValueError(f"Data name '{data_name}' is not valid.")
-
-                self.label_to_indices = defaultdict(list)
-                for idx, (_, label) in tqdm(enumerate(self.train_set)):
-                    self.label_to_indices[int(label)].append(idx)
-
-            # Load model
             if self.model is None:
 
                 klass = globals()[f'{model_name}_{data_name}']
@@ -99,26 +71,38 @@ class RpcClient:
             lr = self.response["lr"]
             momentum = self.response["momentum"]
             sda_size = self.response.get("sda_size", 1)
+            layer2_devices = self.response.get("layer2_devices", [])
 
-            # Read parameters and load to model
             if state_dict:
                 self.model.load_state_dict(state_dict)
 
-            # Start training
+            if model_name == 'BERT':
+                if self.peft_config is None:
+                    self.peft_config = LoraConfig(
+                        task_type="SEQ_CLS",
+                        r=8, lora_alpha=16, lora_dropout=0.1,
+                        bias="none",
+                        target_modules=["query", "key", "value", "dense"]
+                    )
+                self.model = get_peft_model(self.model, self.peft_config)
+                if self.layer_id == 2:
+                    for param in self.model.layer15.parameters():
+                        param.requires_grad = True
+
+            self.model.to(self.device)
+
             if self.layer_id == 1:
-                selected_indices = []
-                for label, count in enumerate(self.label_count):
-                    selected_indices.extend(random.sample(self.label_to_indices[label], count))
+                if self.train_loader is None:
+                    self.train_loader = data_loader(data_name, batch_size, self.label_count, train=True)
 
-                subset = torch.utils.data.Subset(self.train_set, selected_indices)
-                train_loader = torch.utils.data.DataLoader(subset, batch_size=batch_size, shuffle=True)
-
-                result, size = self.train_func(self.model, lr, momentum, train_loader, local_round=local_round)
+                result, size = self.train_func(self.model, lr, momentum, self.train_loader, local_round=local_round, layer2_devices=layer2_devices, model_name=model_name)
 
             else:
-                result, size = self.train_func(self.model, lr, momentum, None, local_round=local_round, sda_size=sda_size)
+                result, size = self.train_func(self.model, lr, momentum, None, local_round=local_round, sda_size=sda_size, model_name=model_name)
 
-            # Stop training, then send parameters to server
+            if model_name == 'BERT':
+                self.model = self.model.merge_and_unload()
+
             model_state_dict = copy.deepcopy(self.model.state_dict())
             if self.device != "cpu":
                 for key in model_state_dict:
@@ -132,7 +116,6 @@ class RpcClient:
             return True
         elif action == "STOP":
             return False
-
 
     def send_to_server(self, message):
         self.response = None

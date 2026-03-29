@@ -76,6 +76,9 @@ class Server:
         self.idx = 0
         self.current_clients_cluster = 0
 
+        self.current_lr = 0
+        self.sda_size = 0
+
         self.channel.basic_qos(prefetch_count=1)
         self.reply_channel = self.connection.channel()
         self.channel.basic_consume(queue='rpc_queue', on_message_callback=self.on_request)
@@ -89,16 +92,27 @@ class Server:
         if self.non_iid:
             # label_distribution = np.random.dirichlet([self.data_distribution["dirichlet"]["alpha"]] * self.num_label,
             #                                          self.total_clients[0])
-
-            label_distribution = np.array([[0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1],
-                                           [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.1],
-                                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.1],
-                                           [0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1],
-                                           [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.1],
-                                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.1],
-                                           [0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1],
-                                           [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.1],
-                                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.1],
+            #VGG16
+            # label_distribution = np.array([[0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1],
+            #                                [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.1],
+            #                                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.1],
+            #                                [0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1],
+            #                                [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.1],
+            #                                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.1],
+            #                                [0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1],
+            #                                [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.1],
+            #                                [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.1],
+            #                                ])
+            #KWT
+            label_distribution = np.array([[0.25, 0.25, 0.25, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                                           [0.0, 0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25, 0.0, 0.0, 0.0, 0.0],
+                                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25],
+                                           [0.25, 0.25, 0.25, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                                           [0.0, 0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25, 0.0, 0.0, 0.0, 0.0],
+                                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25],
+                                           [0.25, 0.25, 0.25, 0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                                           [0.0, 0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25, 0.0, 0.0, 0.0, 0.0],
+                                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.25, 0.25, 0.25, 0.25],
                                            ])
 
             self.label_counts = (label_distribution * self.num_sample).astype(int)
@@ -216,8 +230,9 @@ class Server:
                     if self.validation and self.round_result:
                         state_dict_full =  self.concatenate_and_avg_clusters()
                         self.avg_state_dict = []
-                        if not src.Validation.test(self.model_name, self.data_name, state_dict_full, self.logger):
+                        if not src.Validation.test(self.model_name, self.data_name, state_dict_full, self.logger, self.connection):
                             self.logger.log_warning("Training failed!")
+                            self.round = 0
                         else:
                             torch.save(state_dict_full, f'{self.model_name}_{self.data_name}.pth')
                             self.round -= 1
@@ -228,9 +243,6 @@ class Server:
 
                     if self.round > 0:
                         current_round = self.global_round - self.round + 1
-                        # Step decay: reduce LR by lr_decay every lr_step rounds
-                        num_decays = current_round // self.lr_step
-                        self.current_lr = self.lr * (self.lr_decay ** num_decays)
                         self.logger.log_info(f"Start training round {current_round}")
                         self.logger.log_info(f"Learning rate: {self.current_lr}")
                         self.label_ = copy.deepcopy(self.label_counts)
@@ -244,6 +256,8 @@ class Server:
 
     def notify_clients(self, start=True, register=True, idx=0, avg_model=None):
         if start:
+            layer2_device_ids = [str(cid) for (cid, lid, cl) in self.list_clients if lid == 2]
+
             if register:
                 klass = globals()[f'{self.model_name}_{self.data_name}']
 
@@ -275,7 +289,10 @@ class Server:
                         keys = state_dict.keys()
 
                         for key in keys:
-                            state_dict[key] = full_state_dict[key]
+                            if key in full_state_dict:
+                                state_dict[key] = full_state_dict[key]
+                            else:
+                                state_dict[key] = full_state_dict[key]
                         self.logger.log_info("Model loaded successfully.")
                     else:
                         self.logger.log_info(f"File {filepath} does not exist.")
@@ -298,7 +315,8 @@ class Server:
                                 "momentum": self.momentum,
                                 "label_count": label,
                                 "local_round": self.local_round,
-                                "sda_size": self.sda_size
+                                "sda_size": self.sda_size,
+                                "layer2_devices": layer2_device_ids
                                 }
 
                     self.send_to_response(client_id, pickle.dumps(response))
@@ -320,7 +338,8 @@ class Server:
                                     "momentum": self.momentum,
                                     "label_count": label,
                                     "local_round": self.local_round,
-                                    "sda_size": self.sda_size
+                                    "sda_size": self.sda_size,
+                                    "layer2_devices": layer2_device_ids
                                     }
 
                         self.send_to_response(client_id, pickle.dumps(response))
