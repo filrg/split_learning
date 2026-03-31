@@ -1,16 +1,16 @@
+import torch
+import torch.nn as nn
 from tqdm import tqdm
 
 from src.dataset.dataloader import data_loader
-
-from src.model import *
+from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
 
 def val_VGG16(data_name, state_dict_full, logger):
     criterion = nn.CrossEntropyLoss()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     test_loader = data_loader(data_name=data_name, train=False)
 
-    klass = globals()[f'VGG16_{data_name}']
-    model = klass()
+    model = VGG16_CIFAR10()
     model.load_state_dict(state_dict_full)
     model.to(device)
     model.eval()

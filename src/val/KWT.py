@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 from src.dataset.dataloader import data_loader
-from src.model import KWT_SPEECHCOMMANDS
+from src.model.KWT_SPEECHCOMMANDS import KWT_SPEECHCOMMANDS
 
 
 def val_KWT(data_name, state_dict_full, logger):

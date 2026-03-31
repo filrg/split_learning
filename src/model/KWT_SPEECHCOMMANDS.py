@@ -15,43 +15,27 @@ class TransformerEncoderBlock(nn.Module):
         )
 
     def forward(self, x):
-        # Attention + residual
         _x = self.ln1(x)
         x_attn = self.mha(_x, _x, _x)[0]
         x = x + x_attn
-        # MLP + residual
         x_mlp = self.mlp(self.ln2(x))
         x = x + x_mlp
         return x
 
 
 class KWT_SPEECHCOMMANDS(nn.Module):
-    """
-    Keyword Transformer (KWT-1) for Speech Commands - Split Learning version
-    KWT-1: dim=64, mlp_dim=256, heads=1, layers=12
-    
-    Layers:
-        1: Linear embedding (n_mfcc -> embed_dim)
-        2: CLS token concatenation
-        3: Positional embedding + Dropout
-        4-15: 12x Transformer encoder blocks
-        16: LayerNorm
-        17: Classification head
-    """
     
     def __init__(self, start_layer=0, end_layer=17):
         super().__init__()
         self.start_layer = start_layer
-        # Handle -1 as "all remaining layers"
         self.end_layer = 17 if end_layer == -1 else end_layer
         
-        # KWT-1 config (matches Colab)
         n_mfcc = 40
-        time_steps = 98  # (16000 - 480) / 160 + 1 ≈ 98
+        time_steps = 98
         embed_dim = 64
         num_heads = 1
         mlp_dim = 256
-        num_classes = 12
+        num_classes = 10
         dropout = 0.1
         
         # Layer 1: Linear embedding

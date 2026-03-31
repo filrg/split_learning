@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 
 import src.Log
-class Train_Bert:
+class Train_BERT:
     def __init__(self, client_id, layer_id, channel, device):
         self.client_id = client_id
         self.layer_id = layer_id

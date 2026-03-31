@@ -3,10 +3,11 @@ import pickle
 import copy
 
 import src.Log
-from src.model import *
-from src.model.Bert_EMOTION import Bert
+from src.model.BERT_AGNEWS import BERT_AGNEWS
+from src.model.KWT_SPEECHCOMMANDS import KWT_SPEECHCOMMANDS
+from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
 from src.train.VGG16 import Train_VGG16
-from src.train.Bert import Train_Bert
+from src.train.BERT import Train_BERT
 from src.train.ViT import Train_ViT
 from src.train.KWT import Train_KWT
 from src.dataset.dataloader import data_loader
@@ -55,8 +56,8 @@ class RpcClient:
 
             if model_name == 'VGG16':
                 self.model_train = Train_VGG16(self.client_id, self.layer_id, self.channel, self.device)
-            elif model_name == 'Bert':
-                self.model_train = Train_Bert(self.client_id, self.layer_id, self.channel, self.device)
+            elif model_name == 'BERT':
+                self.model_train = Train_BERT(self.client_id, self.layer_id, self.channel, self.device)
                 self.peft_config = LoraConfig(
                     task_type="SEQ_CLS",
                     r=8, lora_alpha=16, lora_dropout=0.1,
@@ -77,41 +78,33 @@ class RpcClient:
 
             # Load model
             if self.model is None:
-                if model_name != 'Bert':
-                    klass = globals()[f'{model_name}_{data_name}']
-
-                    if cut_layers[1] != 0:
-                        if cut_layers[1] == -1:
-                            self.model = klass(start_layer=cut_layers[0])
-                        else:
-                            self.model = klass(start_layer=cut_layers[0], end_layer=cut_layers[1])
-                    else:
-                        self.model = klass()
-
+                if model_name == 'BERT':
+                    klass = BERT_AGNEWS
+                elif model_name == 'KWT':
+                    klass = KWT_SPEECHCOMMANDS
                 else:
-                    klass = Bert
-                    if self.layer_id == 1:
-                        self.model = klass(layer_id=1 , n_block=cut_layers[1])
+                    klass = VGG16_CIFAR10
+
+                if cut_layers[1] != 0:
+                    if cut_layers[1] == -1:
+                        self.model = klass(start_layer=cut_layers[0])
                     else:
-                        self.model = klass(layer_id=2, n_block=12 - cut_layers[0])
+                        self.model = klass(start_layer=cut_layers[0], end_layer=cut_layers[1])
+                else:
+                    self.model = klass()
 
             batch_size = self.response["batch_size"]
             lr = self.response["lr"]
             momentum = self.response["momentum"]
             control_count = self.response["control_count"]
 
-            # Read parameters and load to model
             if state_dict:
-                if model_name == 'KWT':
-                    state_dict = {k: v for k, v in state_dict.items() if 'ln' not in k and 'layer16' not in k}
-                    self.model.load_state_dict(state_dict, strict=False)
-                else:
-                    self.model.load_state_dict(state_dict)
+                self.model.load_state_dict(state_dict)
 
-            if model_name == 'Bert':
+            if model_name == 'BERT':
                 self.model = get_peft_model(self.model, self.peft_config)
                 if self.layer_id == 2:
-                    for param in self.model.classifier.parameters():
+                    for param in self.model.layer15.classifier.parameters():
                         param.requires_grad = True
 
             self.model.to(self.device)
@@ -131,7 +124,7 @@ class RpcClient:
                 result, size = self.model_train.train_on_middle_layer(self.model, lr, momentum, clip_grad_norm, control_count, self.cluster)
             
             # Stop training, then send parameters to server
-            if model_name == 'Bert':
+            if model_name == 'BERT':
                 self.model = self.model.merge_and_unload()
 
             model_state_dict = copy.deepcopy(self.model.state_dict())

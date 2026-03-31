@@ -1,3 +1,4 @@
+import torch
 import os
 import random
 import pika
@@ -8,12 +9,14 @@ import copy
 import src.Log
 import src.Utils
 
-from src.model.Bert_EMOTION import Bert
+
+from src.model.BERT_AGNEWS import BERT_AGNEWS
+from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
+from src.model.KWT_SPEECHCOMMANDS import KWT_SPEECHCOMMANDS
 from src.Cluster import clustering_algorithm
 from src.Selection import auto_threshold
 from src.Selection import lpt
 from algorithm.partition import partition
-from src.model import *
 from src.val.get_val import get_val
 
 class Server:
@@ -50,8 +53,6 @@ class Server:
         self.client_cluster_config = config["server"]["client-cluster"]
         self.mode_cluster = self.client_cluster_config["enable"]
         self.auto_cluster = self.client_cluster_config["auto-cluster"]
-        if not self.mode_cluster:
-            self.local_round = 1
 
         # Data distribution
         self.non_iid = self.data_distribution["non-iid"]
@@ -136,10 +137,8 @@ class Server:
                 self.list_clients.append((str(client_id), layer_id, performance, cluster, exe_time, net))
 
             src.Log.print_with_color(f"[<<<] Received message from client: {message}", "blue")
-            # Save messages from clients
             self.register_clients[layer_id - 1] += 1
 
-            # If consumed all clients - Register for first time
             if self.register_clients == self.total_clients:
                 src.Log.print_with_color("All clients are connected. Sending notifications.", "green")
 
@@ -174,7 +173,6 @@ class Server:
             result = message["result"]
             src.Log.print_with_color(f"[<<<] Received message from {client_id}: {data_message}", "blue")
             cluster = message["cluster"]
-            # Global update
 
             self.current_clients[layer_id - 1] += 1
             if not result:
@@ -214,10 +212,6 @@ class Server:
 
                 if self.round > 0:
                     self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
-                    
-                    if self.model_name == 'KWT':
-                        self.lr = self.lr * 0.99
-                        self.logger.log_info(f"Decayed Learning Rate to {self.lr:.6f}")
 
                     if self.save_parameters:
                         self.notify_clients()
@@ -262,9 +256,8 @@ class Server:
 
                         self.send_to_response(client_id, pickle.dumps(response))
         else:
-            # Send message to clients when consumed all clients
             for (client_id, layer_id, _, clustering, _, _, label, train) in self.list_clients:
-                # Read parameters file
+
                 filepath = f'{self.model_name}_{self.data_name}.pth'
                 state_dict = None
 
@@ -281,48 +274,31 @@ class Server:
                         if os.path.exists(filepath):
                             full_state_dict = torch.load(filepath, weights_only=True)
 
-                            if self.model_name != 'Bert':
-                                klass = globals()[f'{self.model_name}_{self.data_name}']
-                                if layer_id == 1:
-                                    if layers == [0, 0]:
-                                        model = klass()
-                                    else:
-                                        model = klass(end_layer=layers[1])
-                                elif layer_id == len(self.total_clients):
-                                    model = klass(start_layer=layers[0])
-                                else:
-                                    model = klass(start_layer=layers[0], end_layer=layers[1])
-                                state_dict = model.state_dict()
-                                keys = state_dict.keys()
-
-                                for key in keys:
-                                    state_dict[key] = full_state_dict[key]
-
+                            if self.model_name == "BERT":
+                                klass = BERT_AGNEWS
+                            elif self.model_name == "KWT":
+                                klass = KWT_SPEECHCOMMANDS
                             else:
-                                klass = Bert
-                                if layer_id == 1:
-                                    model = klass(layer_id=1, n_block=layers[1])
-                                    state_dict = model.state_dict()
-                                    keys = state_dict.keys()
+                                klass = VGG16_CIFAR10
 
-                                    for key in keys:
-                                        state_dict[key] = full_state_dict[key]
+                            if layer_id == 1:
+                                if layers == [0, 0]:
+                                    model = klass()
                                 else:
-                                    model = klass(layer_id=2, n_block=12 - layers[0])
-                                    state_dict = model.state_dict()
-                                    state_dict = src.Utils.change_keys(state_dict, layers[0], True)
-                                    keys = state_dict.keys()
+                                    model = klass(end_layer=layers[1])
+                            elif layer_id == len(self.total_clients):
+                                model = klass(start_layer=layers[0])
+                            else:
+                                model = klass(start_layer=layers[0], end_layer=layers[1])
+                            state_dict = model.state_dict()
+                            keys = state_dict.keys()
 
-                                    for key in keys:
-                                        state_dict[key] = full_state_dict[key]
+                            for key in keys:
+                                state_dict[key] = full_state_dict[key]
 
-                                    state_dict = src.Utils.change_keys(state_dict, layers[0], False)
-
-                                src.Log.print_with_color(f"Load pretrain model successfully", "green")
-
-
+                            src.Log.print_with_color(f"Load model {filepath}.pth successfully", "green")
                         else:
-                            self.logger.log_info(f"File {filepath} does not exist.")
+                            src.Log.print_with_color(f"File {filepath} does not exist.", "yellow")
 
                     src.Log.print_with_color(f"[>>>] Sent start training request to client {client_id}", "red")
                     if train is True:
@@ -524,15 +500,8 @@ class Server:
             full_dict = {}
             if self.list_cut_layers[c][0] != 0:
                 for idx, layer_dict in enumerate(avg_layers):
-                    if idx == 0:
-                        sd = layer_dict
-                        full_dict.update(copy.deepcopy(sd))
-                    else:
-                        if self.model_name == 'Bert':
-                            sd = src.Utils.change_keys(layer_dict, self.list_cut_layers[c][0], True)
-                        else:
-                            sd = layer_dict
-                        full_dict.update(copy.deepcopy(sd))
+                    sd = layer_dict
+                    full_dict.update(copy.deepcopy(sd))
             else:
                 full_dict.update(copy.deepcopy(avg_layers[0]))
 
