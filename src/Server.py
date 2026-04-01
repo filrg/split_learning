@@ -131,7 +131,8 @@ class Server:
             net = message['net']
             size_data = message['size_data']
             if self.size_data is None:
-                self.size_data = size_data
+                if layer_id == 1:
+                    self.size_data = size_data
 
             if (str(client_id), layer_id, performance, cluster, exe_time, net) not in self.list_clients:
                 self.list_clients.append((str(client_id), layer_id, performance, cluster, exe_time, net))
@@ -412,7 +413,7 @@ class Server:
                             else:
                                 exe_time_layer_2.append(exe_time)
                                 net_layer_2.append(net)
-                    cut_point = partition(self.model_name, exe_time_layer_1, net_layer_1, exe_time_layer_2, net_layer_2, self.size_data)
+                    cut_point = partition(exe_time_layer_1, net_layer_1, exe_time_layer_2, net_layer_2, self.size_data)
                     self.list_cut_layers.append(cut_point)
 
             else:
@@ -451,7 +452,7 @@ class Server:
                 else:
                     exe_time_layer_2.append(exe_time)
                     net_layer_2.append(net)
-            cut_point = partition(self.model_name, exe_time_layer_1, net_layer_1, exe_time_layer_2, net_layer_2, self.size_data)
+            cut_point = partition(exe_time_layer_1, net_layer_1, exe_time_layer_2, net_layer_2, self.size_data)
             self.list_cut_layers.append(cut_point)
 
         self.global_model_parameters = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
