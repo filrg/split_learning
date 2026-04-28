@@ -5,7 +5,7 @@ server:
     - 9
     - 3
   num-cluster: 3
-  cut-layer: 2
+  cut-layer: 2 # 7/2/4
   info-cluster:
     - [2,1]
     - [2,1]

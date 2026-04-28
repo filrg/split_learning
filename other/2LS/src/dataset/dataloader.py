@@ -72,8 +72,9 @@ def CIFAR10(batch_size=None, distribution=None, train=True):
 
         train_set = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
 
+        labels = train_set.targets
         label_to_indices = defaultdict(list)
-        for idx, (_, label) in tqdm(enumerate(train_set)):
+        for idx, label in tqdm(enumerate(labels)):
             label_to_indices[int(label)].append(idx)
 
         selected_indices = []

@@ -49,6 +49,7 @@ class RpcClient:
             model_name = self.response["model_name"]
             cut_layers = self.response['layers']
             label_count = self.response['label_count']
+            refresh =  self.response['refresh']
             num_layers = self.response['num_layers']
             clip_grad_norm = self.response['clip_grad_norm']
             data_name = self.response["data_name"]
@@ -111,7 +112,7 @@ class RpcClient:
 
             # Start training
             if self.layer_id == 1:
-                if self.train_loader is None:
+                if (self.train_loader is None) or refresh:
                     self.train_loader = data_loader(data_name, batch_size, self.label_count, train=True)
                 if cut_layers[1] != 0:
                     result, size = self.model_train.train_on_first_layer(self.model, lr, momentum, clip_grad_norm, control_count, self.train_loader, self.cluster, config_time=config_time)

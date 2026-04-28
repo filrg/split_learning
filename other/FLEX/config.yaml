@@ -7,7 +7,7 @@ server:
     - 9
     - 3
   num-cluster: 3
-  cut-layer: # VGG16[4,7] , Bert [1,2]
+  cut-layer: # VGG16[4,7] , Bert [2,3]
     - 7
     - 7
     - 4
