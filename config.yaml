@@ -1,28 +1,18 @@
 name: Split Learning
 server:
-  limited-time:
-    enable: False
-    epoch: 1
-    time: 10 #(seconds)
-
   global-round: 1
   clients:
     - 1
     - 1
-  no-cluster:
-    cut-layers: [1]
-  manual-cluster:
-    num-cluster: 1
-    cut-layers:
-      - [1]
-    infor-cluster:
-      - [1,1]
-  model: KWT
-  data-name: SPEECHCOMMANDS
+  auto-mode: False
+
+  model: VGG16
+  data-name: CIFAR10
   parameters:
     load: True
     save: True
   validation: True
+
   data-distribution:
     non-iid: False
     num-sample: 5000
@@ -31,15 +21,22 @@ server:
       alpha: 1
     refresh: True
   random-seed: 1
-  client-cluster:
-    enable: False
-    auto-cluster: False
-    cluster: KMeans
-    AffinityPropagation:
-      damping: 0.9
-      max_iter: 1000
-    KMeans:
+
+  manual:
+    cluster-mode: False
+    no-cluster:
+      cut-layers: [1]
+    cluster:
       num-cluster: 1
+      cut-layers:
+        - [1]
+      infor-cluster:
+        - [1,1]
+
+  cluster-selection:
+    num-cluster : 1
+    algorithm-cluster: KMeans
+    selection-mode: False
 
 rabbit:
   address: 127.0.0.1
@@ -52,8 +49,7 @@ debug_mode: True
 
 learning:
   learning-rate: 0.0005
+  weight-decay: 0.01
   momentum: 0.5
   batch-size: 32
   control-count: 3
-  clip-grad-norm: 0.0
-

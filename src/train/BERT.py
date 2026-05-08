@@ -64,87 +64,64 @@ class Train_BERT:
                                    routing_key='rpc_queue',
                                    body=pickle.dumps(message))
 
-    def train_on_first_layer(self, model, lr, weight_decay, clip_grad_norm,
-                             control_count=1, train_loader=None, cluster=0, config_time=None):
-        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-
-        mode_limited_time = config_time["enable"]
-        limited_time = config_time["time"]
-        if mode_limited_time:
-            epoch = 100
-        else:
-            epoch = config_time["epoch"]
+    def train_on_first_layer(self, model, learning, train_loader=None, cluster=0):
+        optimizer = torch.optim.AdamW(model.parameters(), lr=learning['learning-rate'], weight_decay=learning['weight-decay'])
 
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
         self.channel.queue_declare(queue=backward_queue_name, durable=False)
         self.channel.basic_qos(prefetch_count=1)
-        start = time.time()
         model = model.to(self.device)
 
-        for i in range(epoch):
-            data_iter = iter(train_loader)
-            num_forward = 0
-            num_backward = 0
-            end_data = False
-            end_training = False
-            data_store = {}
+        data_iter = iter(train_loader)
+        num_forward = 0
+        num_backward = 0
+        end_data = False
+        data_store = {}
 
-            with tqdm(total=len(train_loader), desc="Processing", unit="step") as pbar:
-                while True:
-                    # Training model
-                    model.train()
-                    optimizer.zero_grad()
+        with tqdm(total=len(train_loader), desc="Processing", unit="step") as pbar:
+            while True:
+                # Training model
+                model.train()
+                optimizer.zero_grad()
 
-                    # Process gradient
-                    method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
-                    if method_frame and body:
-                        num_backward += 1
-                        received_data = pickle.loads(body)
-                        gradient_numpy = received_data["data"]
-                        gradient = torch.tensor(gradient_numpy).to(self.device)
-                        data_id = received_data["data_id"]
+                # Process gradient
+                method_frame, header_frame, body = self.channel.basic_get(queue=backward_queue_name, auto_ack=True)
+                if method_frame and body:
+                    num_backward += 1
+                    received_data = pickle.loads(body)
+                    gradient_numpy = received_data["data"]
+                    gradient = torch.tensor(gradient_numpy).to(self.device)
+                    data_id = received_data["data_id"]
 
-                        data_input = data_store.pop(data_id)
-                        output = model(input_ids=data_input)
-                        output.backward(gradient=gradient)
-                        optimizer.step()
+                    data_input = data_store.pop(data_id)
+                    output = model(input_ids=data_input)
+                    output.backward(gradient=gradient)
+                    optimizer.step()
+                else:
+                    # speed control
+                    if len(data_store) >= learning['control-count']:
+                        continue
                     else:
-                        # speed control
-                        if len(data_store) >= control_count:
-                            continue
+                        try:
+                            batch = next(data_iter)
+                            input_ids = batch['input_ids'].to(self.device)
+                            labels = batch['labels'].to(self.device)
+                            data_id = uuid.uuid4()
+                            data_store[data_id] = input_ids
 
-                        if ((time.time() - start) > limited_time) and mode_limited_time is True:
-                            if i > 0:
-                                end_data = True
-                                end_training = True
-                            else:
-                                if num_forward == num_backward:
-                                    end_training = True
-                                    break
-                        else:
-                            try:
-                                batch = next(data_iter)
-                                input_ids = batch['input_ids'].to(self.device)
-                                labels = batch['labels'].to(self.device)
-                                data_id = uuid.uuid4()
-                                data_store[data_id] = input_ids
+                            intermediate_output = model(input_ids=input_ids)
+                            intermediate_output = intermediate_output.detach().requires_grad_(True)
 
-                                intermediate_output = model(input_ids=input_ids)
-                                intermediate_output = intermediate_output.detach().requires_grad_(True)
+                            num_forward += 1
+                            self.data_count += 1
 
-                                num_forward += 1
-                                self.data_count += 1
+                            pbar.update(1)
+                            self.send_intermediate_output(data_id, intermediate_output, labels, trace=None, cluster=cluster)
 
-                                pbar.update(1)
-                                self.send_intermediate_output(data_id, intermediate_output, labels, trace=None, cluster=cluster)
+                        except StopIteration:
+                            end_data = True
 
-                            except StopIteration:
-                                end_data = True
-
-                    if end_data and (num_forward == num_backward):
-                        break
-
-                if end_training is True:
+                if end_data and (num_forward == num_backward):
                     break
 
         notify_data = {"action": "NOTIFY", "client_id": self.client_id, "layer_id": self.layer_id,
@@ -163,8 +140,8 @@ class Train_BERT:
                     return True, self.data_count
             time.sleep(0.5)
 
-    def train_on_last_layer(self, model, lr, weight_decay, clip_grad_norm, cluster=0):
-        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    def train_on_last_layer(self, model, learning, cluster=0):
+        optimizer = torch.optim.AdamW(model.parameters(), lr=learning['learning-rate'], weight_decay=learning['weight-decay'])
         criterion = nn.CrossEntropyLoss()
         result = True
 
@@ -212,15 +189,3 @@ class Train_BERT:
                     src.Log.print_with_color(f"[<<<] Received message from server {received_data}", "blue")
                     if received_data["action"] == "PAUSE":
                         return result, self.data_count
-
-    def train_on_middle_layer(self, model, lr, momentum, clip_grad_norm, control_count=5, cluster=None):
-        pass
-
-    def alone_training(self, model, lr, momentum, clip_grad_norm, train_loader=None, cluster=None):
-        pass
-
-
-
-
-
-

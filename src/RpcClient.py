@@ -8,7 +8,6 @@ from src.model.KWT_SPEECHCOMMANDS import KWT_SPEECHCOMMANDS
 from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
 from src.train.VGG16 import Train_VGG16
 from src.train.BERT import Train_BERT
-from src.train.ViT import Train_ViT
 from src.train.KWT import Train_KWT
 from src.dataset.dataloader import data_loader
 
@@ -50,10 +49,8 @@ class RpcClient:
             cut_layers = self.response['layers']
             label_count = self.response['label_count']
             refresh =  self.response['refresh']
-            num_layers = self.response['num_layers']
-            clip_grad_norm = self.response['clip_grad_norm']
             data_name = self.response["data_name"]
-            config_time = self.response["config_time"]
+            learning = self.response["learning"]
 
             if model_name == 'VGG16':
                 self.model_train = Train_VGG16(self.client_id, self.layer_id, self.channel, self.device)
@@ -65,8 +62,6 @@ class RpcClient:
                     bias="none",
                     target_modules=["query", "key", "value", "dense"]
                 )
-            elif model_name == 'ViT':
-                self.model_train = Train_ViT(self.client_id, self.layer_id, self.channel, self.device)
             elif model_name == 'KWT':
                 self.model_train = Train_KWT(self.client_id, self.layer_id, self.channel, self.device)
 
@@ -94,10 +89,7 @@ class RpcClient:
                 else:
                     self.model = klass()
 
-            batch_size = self.response["batch_size"]
-            lr = self.response["lr"]
-            momentum = self.response["momentum"]
-            control_count = self.response["control_count"]
+            batch_size = learning["batch-size"]
 
             if state_dict:
                 self.model.load_state_dict(state_dict)
@@ -114,16 +106,11 @@ class RpcClient:
             if self.layer_id == 1:
                 if (self.train_loader is None) or refresh:
                     self.train_loader = data_loader(data_name, batch_size, self.label_count, train=True)
-                if cut_layers[1] != 0:
-                    result, size = self.model_train.train_on_first_layer(self.model, lr, momentum, clip_grad_norm, control_count, self.train_loader, self.cluster, config_time=config_time)
-                else:
-                    result, size = self.model_train.alone_training(self.model, lr, momentum, clip_grad_norm, self.cluster)
 
-            elif self.layer_id == num_layers:
-                result, size = self.model_train.train_on_last_layer(self.model, lr, momentum, clip_grad_norm, self.cluster)
+                result, size = self.model_train.train_on_first_layer(self.model, learning, self.train_loader, self.cluster)
             else:
-                result, size = self.model_train.train_on_middle_layer(self.model, lr, momentum, clip_grad_norm, control_count, self.cluster)
-            
+                result, size = self.model_train.train_on_last_layer(self.model, learning, self.cluster)
+
             # Stop training, then send parameters to server
             if model_name == 'BERT':
                 self.model = self.model.merge_and_unload()

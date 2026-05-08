@@ -52,14 +52,9 @@ if __name__ == "__main__":
     if os.path.exists("profiling.json"):
         src.Log.print_with_color(f"Exists profiling.json.", 'green')
         with open("profiling.json","r", encoding='utf-8') as file:
-            loaded_data = json.load(file)
+            profile = json.load(file)
 
-        performance = loaded_data["training speed"]
-        exe_time = loaded_data["execute training time"]
-        net = loaded_data["network"]
-        size_data = loaded_data["list of data size"]
-
-        data = {"action": "REGISTER", "client_id": client_id, "layer_id": args.layer_id, "performance": performance ,"cluster": cluster, "exe_time": exe_time, "net": net, "size_data": size_data, "message": "Hello from Client!"}
+        data = {"action": "REGISTER", "client_id": client_id, "layer_id": args.layer_id, "profile": profile ,"cluster": cluster, "message": "Hello from Client!"}
         client = RpcClient(client_id, args.layer_id, channel, device)
         client.send_to_server(data)
         client.wait_response()

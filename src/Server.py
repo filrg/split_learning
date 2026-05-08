@@ -9,14 +9,13 @@ import copy
 import src.Log
 import src.Utils
 
-
 from src.model.BERT_AGNEWS import BERT_AGNEWS
 from src.model.VGG16_CIFAR10 import VGG16_CIFAR10
 from src.model.KWT_SPEECHCOMMANDS import KWT_SPEECHCOMMANDS
+
 from src.Cluster import clustering_algorithm
 from src.Selection import auto_threshold
-from src.Selection import lpt
-from algorithm.partition import partition
+from src.Partition import partition
 from src.val.get_val import get_val
 
 class Server:
@@ -27,37 +26,24 @@ class Server:
         password = config["rabbit"]["password"]
         virtual_host = config["rabbit"]["virtual-host"]
 
-        self.manual_cluster = config["server"]["manual-cluster"]
+        self.auto_mode = config["server"]["auto-mode"]
+        self.manual = config["server"]["manual"]
+        self.cluster_selection = config["server"]["cluster-selection"]
         self.model_name = config["server"]["model"]
         self.data_name = config["server"]["data-name"]
         self.total_clients = config["server"]["clients"]
-        self.list_cut_layers = [config["server"]["no-cluster"]["cut-layers"]]
+        self.list_cut_layers = []
         self.global_round = config["server"]["global-round"]
         self.round = self.global_round
         self.save_parameters = config["server"]["parameters"]["save"]
         self.load_parameters = config["server"]["parameters"]["load"]
         self.validation = config["server"]["validation"]
 
-        # Time training
-        self.config_time = config["server"]["limited-time"]
-
         # Clients
-        self.batch_size = config["learning"]["batch-size"]
-        self.lr = config["learning"]["learning-rate"]
-        self.momentum = config["learning"]["momentum"]
-        self.control_count = config["learning"]["control-count"]
-        self.clip_grad_norm = config["learning"]["clip-grad-norm"]
-        self.data_distribution = config["server"]["data-distribution"]
-
-        # Cluster
-        self.client_cluster_config = config["server"]["client-cluster"]
-        self.mode_cluster = self.client_cluster_config["enable"]
-        self.auto_cluster = self.client_cluster_config["auto-cluster"]
+        self.learning = config["learning"]
 
         # Data distribution
-        self.non_iid = self.data_distribution["non-iid"]
-        self.num_label = self.data_distribution["num-label"]
-        self.num_sample = self.data_distribution["num-sample"]
+        self.data_distribution = config["server"]["data-distribution"]
         self.refresh = self.data_distribution["refresh"]
         self.random_seed = config["server"]["random-seed"]
         self.label_counts = None
@@ -85,36 +71,33 @@ class Server:
         self.avg_state_dict = None
 
         self.size_data = None
-        self.num_cluster = None
+        self.num_cluster = 1
         self.infor_cluster = None
         self.reject = False
 
-        self.channel.basic_qos(prefetch_count=1)
+        self.channel.basic_qos(prefetch_count=10)
         self.reply_channel = self.connection.channel()
         self.channel.basic_consume(queue='rpc_queue', on_message_callback=self.on_request)
 
         debug_mode = config["debug_mode"]
         self.logger = src.Log.Logger(f"{log_path}/app.log", debug_mode)
-        # self.logger.log_info(f"Application start. Server is waiting for {self.total_clients} clients.")
-        src.Log.print_with_color(f"Application start. Server is waiting for {self.total_clients} clients.", "green")
+        self.logger.log_info(f"Application start. Server is waiting for {self.total_clients} clients.")
 
     def distribution(self):
-        if self.non_iid:
-            # label_distribution = np.random.dirichlet([self.data_distribution["dirichlet"]["alpha"]] * self.num_label,
-            #                                          self.total_clients[0])
-            label_distribution = np.array([[0.0, 0.0, 0.0, 0.0, 0.0, 0.09394938, 0.20495232, 0.25764745, 0.20563418, 0.23781668],
-                                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.07172973, 0.24979451, 0.28449692, 0.17334935, 0.22062949],
-                                           [0.0, 0.0, 0.0, 0.0, 0.0, 0.35767604, 0.14840493, 0.24900655, 0.06997417, 0.17493831],
-                                           [0.2824181, 0.132361, 0.09816592, 0.16999675, 0.31705823, 0.0, 0.0, 0.0, 0.0, 0.0],
-                                           [0.25640487, 0.32848751, 0.08951943, 0.24333781, 0.08225038, 0.0, 0.0, 0.0, 0.0, 0.0],
-                                           [0.19780106, 0.31160452, 0.23068388, 0.11227246, 0.14763808, 0.0, 0.0, 0.0, 0.0, 0.0],
-                                           [0.08073514, 0.13786255, 0.06125086, 0.08391925, 0.04435898, 0.0445482, 0.07578602, 0.18663911, 0.20118637, 0.08371351],
-                                           [0.14757221, 0.05964236, 0.06489429, 0.16269761, 0.11871837, 0.0630334, 0.07481413, 0.0249723,  0.10654056, 0.17711471],
-                                           [0.12532717, 0.05295416, 0.10434852, 0.07494715, 0.12291418, 0.0860416, 0.08839187, 0.07168553, 0.20919395, 0.06429587],
-                                           ])
-            self.label_counts = (label_distribution * self.num_sample).astype(int)
+        if self.data_distribution["non-iid"]:
+            label_distribution = np.random.dirichlet([self.data_distribution["dirichlet"]["alpha"]] * self.data_distribution['num-label'],
+                                                     self.total_clients[0])
+
+            self.label_counts = (label_distribution * self.data_distribution["num-sample"]).astype(int)
         else:
-            self.label_counts = np.full((self.total_clients[0], self.num_label), self.num_sample // self.num_label)
+            self.label_counts = np.full((self.total_clients[0], self.data_distribution["num-label"]), self.data_distribution["num-sample"] // self.data_distribution["num-label"])
+
+        label_counts = self.label_counts.tolist()
+        for idx, (client_id, layer_id, profile, cluster) in enumerate(self.list_clients):
+            if layer_id == 1:
+                self.list_clients[idx] = (client_id, layer_id, profile, cluster , label_counts.pop())
+            else:
+                self.list_clients[idx] = (client_id, layer_id, profile, cluster, [])
 
     def on_request(self, ch, method, props, body):
         message = pickle.loads(body)
@@ -125,17 +108,15 @@ class Server:
         self.responses[routing_key] = message
 
         if action == "REGISTER":
+            profile = message['profile']
             cluster =  message['cluster']
-            performance = message['performance']
-            exe_time = message['exe_time']
-            net = message['net']
-            size_data = message['size_data']
+
             if self.size_data is None:
                 if layer_id == 1:
-                    self.size_data = size_data
+                    self.size_data = profile['size_data']
 
-            if (str(client_id), layer_id, performance, cluster, exe_time, net) not in self.list_clients:
-                self.list_clients.append((str(client_id), layer_id, performance, cluster, exe_time, net))
+            if (str(client_id), layer_id, profile, cluster) not in self.list_clients:
+                self.list_clients.append((str(client_id), layer_id, profile, cluster))
 
             src.Log.print_with_color(f"[<<<] Received message from client: {message}", "blue")
             self.register_clients[layer_id - 1] += 1
@@ -164,7 +145,7 @@ class Server:
                 self.first_layer_clients_in_each_cluster[cluster] = 0
                 src.Log.print_with_color(f"Received finish training notification cluster {cluster}", "yellow")
 
-                for (client_id, layer_id, _, clustering, _, _ ,_, train) in self.list_clients:
+                for (client_id, layer_id, _, clustering ,_, train) in self.list_clients:
                     if train is True:
                         if clustering == cluster:
                             self.send_to_response(client_id, pickle.dumps(message))
@@ -227,7 +208,7 @@ class Server:
 
     def notify_clients(self, start=True, register=True, cluster=None):
         if cluster is not None:
-            for (client_id, layer_id, _, clustering, _, _ ,_, train) in self.list_clients:
+            for (client_id, layer_id, _, clustering,_, train) in self.list_clients:
                 if train is True:
                     if clustering == cluster:
                         if layer_id == 1:
@@ -242,23 +223,17 @@ class Server:
                         response = {"action": "START",
                                     "message": "Server accept the connection!",
                                     "parameters": copy.deepcopy(self.avg_state_dict[cluster][layer_id - 1]),
-                                    "num_layers": len(self.total_clients),
                                     "layers": layers,
                                     "model_name": self.model_name,
                                     "data_name": self.data_name,
-                                    "control_count": self.control_count,
-                                    "batch_size": self.batch_size,
-                                    "lr": self.lr,
-                                    "momentum": self.momentum,
-                                    "clip_grad_norm": self.clip_grad_norm,
+                                    "learning": self.learning,
                                     "refresh": self.refresh,
                                     "label_count": None,
-                                    "cluster": None,
-                                    "config_time": self.config_time}
+                                    "cluster": cluster}
 
                         self.send_to_response(client_id, pickle.dumps(response))
         else:
-            for (client_id, layer_id, _, clustering, _, _, label, train) in self.list_clients:
+            for (client_id, layer_id, _, clustering, label, train) in self.list_clients:
 
                 filepath = f'{self.model_name}_{self.data_name}.pth'
                 state_dict = None
@@ -307,19 +282,13 @@ class Server:
                         response = {"action": "START",
                                     "message": "Server accept the connection!",
                                     "parameters": copy.deepcopy(state_dict),
-                                    "num_layers": len(self.total_clients),
                                     "layers": layers,
                                     "model_name": self.model_name,
                                     "data_name": self.data_name,
-                                    "control_count": self.control_count,
-                                    "batch_size": self.batch_size,
-                                    "lr": self.lr,
-                                    "momentum": self.momentum,
-                                    "clip_grad_norm": self.clip_grad_norm,
+                                    "learning": self.learning,
                                     "label_count": label,
                                     "refresh": self.refresh,
-                                    "cluster": clustering,
-                                    "config_time": self.config_time}
+                                    "cluster": clustering}
                         self.send_to_response(client_id, pickle.dumps(response))
 
                     else:
@@ -342,128 +311,86 @@ class Server:
     def cluster_and_selection(self):
         # Clustering only device in first layer
 
-        if self.mode_cluster is True:
-            self.logger.log_debug(f"Auto_partition is {self.auto_cluster}")
-            if self.auto_cluster is True:
+        if self.auto_mode:
+            self.num_cluster = self.cluster_selection['num-cluster']
+            # Clustering of devices of layer
+            cluster_labels, infor_cluster = clustering_algorithm(self.label_counts, self.num_cluster)
+            cluster_labels = cluster_labels.tolist()
 
-                # Clustering of devices of layer
-                cluster_labels, infor_cluster, num_cluster = clustering_algorithm(self.label_counts,self.client_cluster_config)
+            self.infor_cluster = infor_cluster
+            for idx , _ in enumerate(self.infor_cluster):
+                self.infor_cluster[idx].append(0)
 
-                cluster_labels = cluster_labels.tolist()
-                self.label_counts = self.label_counts.tolist()
-                self.infor_cluster = infor_cluster
-                self.num_cluster = num_cluster
-                list_performance = [[] for _ in range(num_cluster)]
+            list_performance = [[] for _ in range(self.num_cluster)]
 
-                for idx, (client_id, layer_id, performance, cluster, exe_time, net) in enumerate(self.list_clients):
-                    if layer_id == 1:
-                        new_cluster = cluster_labels.pop()
-                        self.list_clients[idx] = (client_id, layer_id, performance, new_cluster, exe_time, net, self.label_counts.pop(), True)
-                        list_performance[new_cluster].append(performance)
+            for idx, (client_id, layer_id, profile, cluster, label) in enumerate(self.list_clients):
+                if layer_id == 1:
+                    new_cluster = cluster_labels.pop()
+                    self.list_clients[idx] = (client_id, layer_id, profile, new_cluster, label, True)
+                    list_performance[new_cluster].append(profile["speed"])
+                else:
+                    self.list_clients[idx] = (client_id, layer_id, profile, cluster, label, True)
 
-                    else:
-                        self.list_clients[idx] = (client_id, layer_id, performance, -1, exe_time, net, [], True)
-
-                # Selection of higher devices in each cluster
+            # Selection of higher devices in each cluster
+            if self.cluster_selection["selection-mode"]:
                 thresholds = []
                 print(list_performance)
                 for performances in list_performance:
                     threshold = auto_threshold(performances)
                     thresholds.append(threshold)
                 print(thresholds)
-                total_performance_cluster = [0 for _ in range(self.num_cluster)]
-                performance_device_layer_2 = []
 
-                for idx, (client_id, layer_id, performance, cluster, exe_time, net, label, select) in enumerate(self.list_clients):
+                for idx, (client_id, layer_id, performance, cluster, label, select) in enumerate(self.list_clients):
                     if layer_id == 1:
                         if performance < thresholds[cluster]:
-                            self.list_clients[idx] = (client_id, layer_id, performance, cluster, exe_time, net ,label, False)
+                            self.list_clients[idx] = (client_id, layer_id, performance, cluster, label, False)
                             self.total_clients[0] -= 1
                             self.infor_cluster[cluster][0] -= 1
                             src.Log.print_with_color(f"Remove a device has id: {client_id}", "red")
-
-                        else:
-                            total_performance_cluster[cluster] += performance
-
                     else:
-                        performance_device_layer_2.append((idx, performance))
-
-                # selecting of devices in layer 2
-                infor_layer_2 = lpt(performance_device_layer_2, total_performance_cluster, self.num_cluster)
-
-                for (cluster_layer_2, layer2) in infor_layer_2:
-                    count = 0
-                    for device in layer2:
-                        (client_id, layer_id, performance, cluster, exe_time, net ,label, train) = self.list_clients[device]
-                        self.list_clients[device] =  (client_id, layer_id, performance, cluster_layer_2, exe_time, net ,label, True)
-                        count += 1
-                    self.infor_cluster[cluster_layer_2].append(count)
-
-                # partition in each cluster
-
-                self.list_cut_layers = []
-                for id_cluster in range(self.num_cluster):
-                    exe_time_layer_1 = []
-                    net_layer_1 = []
-                    exe_time_layer_2 = []
-                    net_layer_2 = []
-                    for (client_id, layer_id, performance, cluster, exe_time, net ,label, train) in self.list_clients:
-                        if cluster == id_cluster:
-                            if layer_id == 1:
-                                exe_time_layer_1.append(exe_time)
-                                net_layer_1.append(net)
-                            else:
-                                exe_time_layer_2.append(exe_time)
-                                net_layer_2.append(net)
-                    cut_point = partition(exe_time_layer_1, net_layer_1, exe_time_layer_2, net_layer_2, self.size_data)
-                    self.list_cut_layers.append(cut_point)
-
+                        self.infor_cluster[cluster][1] += 1
             else:
-                self.label_counts = self.label_counts.tolist()
-                self.num_cluster = self.manual_cluster['num-cluster']
-                self.list_cut_layers = self.manual_cluster['cut-layers']
-                self.infor_cluster = self.manual_cluster['infor-cluster']
+                for idx, (_, layer_id, _, cluster, _, _) in enumerate(self.list_clients):
+                    if layer_id == 2:
+                        self.infor_cluster[cluster][1] += 1
 
-                for idx, (client_id, layer_id, performance, cluster, exe_time, net) in enumerate(self.list_clients):
-                    if layer_id == 1:
-                        self.list_clients[idx] = (client_id, layer_id, performance, cluster, exe_time, net, self.label_counts.pop(), True)
-                    else:
-                        self.list_clients[idx] = (client_id, layer_id, performance, cluster, exe_time, net, [], True)
-
-        else:
-            self.label_counts = self.label_counts.tolist()
-            for idx, (client_id, layer_id, performance, cluster, exe_time, net) in enumerate(self.list_clients):
-                if layer_id == 1:
-                    self.list_clients[idx] = (
-                    client_id, layer_id, performance, 0, exe_time, net, self.label_counts.pop(), True)
-                else:
-                    self.list_clients[idx] = (client_id, layer_id, performance, 0, exe_time, net, [], True)
-
-            self.num_cluster = 1
-            self.infor_cluster = [self.total_clients]
+            # partition in each cluster
 
             self.list_cut_layers = []
-            exe_time_layer_1 = []
-            net_layer_1 = []
-            exe_time_layer_2 = []
-            net_layer_2 = []
-            for (client_id, layer_id, performance, cluster, exe_time, net, label, train) in self.list_clients:
-                if layer_id == 1:
-                    exe_time_layer_1.append(exe_time)
-                    net_layer_1.append(net)
-                else:
-                    exe_time_layer_2.append(exe_time)
-                    net_layer_2.append(net)
-            cut_point = partition(exe_time_layer_1, net_layer_1, exe_time_layer_2, net_layer_2, self.size_data)
-            self.list_cut_layers.append(cut_point)
+            for id_cluster in range(self.num_cluster):
+                exe_time_layer_1 = []
+                net_layer_1 = []
+                exe_time_layer_2 = []
+                net_layer_2 = []
+                for (_, layer_id, profile, cluster,_, _) in self.list_clients:
+                    if cluster == id_cluster:
+                        if layer_id == 1:
+                            exe_time_layer_1.append(profile["exe_time"])
+                            net_layer_1.append(profile["network"])
+                        else:
+                            exe_time_layer_2.append(profile["exe_time"])
+                            net_layer_2.append(profile["network"])
+                cut_point = partition(exe_time_layer_1, net_layer_1, exe_time_layer_2, net_layer_2, self.size_data)
+                self.list_cut_layers.append(cut_point)
+
+        else:
+            if self.manual['cluster-mode']:
+                for idx, (client_id, layer_id, profile, cluster, label) in enumerate(self.list_clients):
+                    self.list_clients[idx] = (client_id, layer_id, profile, cluster, label, True)
+                self.num_cluster = self.manual["cluster"]["num-cluster"]
+                self.infor_cluster = self.manual["cluster"]["infor-cluster"]
+                self.list_cut_layers = self.manual["cluster"]["cut-layers"]
+            else:
+                for idx, (client_id, layer_id, profile, cluster, label) in enumerate(self.list_clients):
+                    self.list_clients[idx] = (client_id, layer_id, profile, 0, label, True)
+                self.num_cluster = 1
+                self.infor_cluster = [self.total_clients]
+                self.list_cut_layers = self.manual["no-cluster"]["cut-layers"]
 
         self.global_model_parameters = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
         self.global_client_sizes = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
         self.avg_state_dict = [[] for _ in range(self.num_cluster)]
-        if self.mode_cluster:
-            self.first_layer_clients_in_each_cluster = [0 for _ in range(self.num_cluster)]
-        else:
-            self.first_layer_clients_in_each_cluster = [0]
+        self.first_layer_clients_in_each_cluster = [0 for _ in range(self.num_cluster)]
 
     def start(self):
         self.channel.start_consuming()

@@ -1,6 +1,5 @@
 from sklearn.mixture import GaussianMixture
 import numpy as np
-import heapq
 
 def auto_threshold(performance, n_init=9):
     performance = np.array(performance, dtype=float)
@@ -47,24 +46,3 @@ def auto_threshold(performance, n_init=9):
             thresh_log = np.mean(mu)
 
     return float(np.exp(thresh_log))
-
-
-def lpt(layer2, layer1, num_cluster):
-
-    layer2 = sorted(layer2, key=lambda x:x[1], reverse=True)
-    clusters = [(0, []) for _ in range(num_cluster)]
-    heapq.heapify(clusters)
-
-    for performance in layer2:
-        total, cluster = heapq.heappop(clusters)
-        cluster.append(performance[0])
-        total += performance[1]
-        heapq.heappush(clusters, (total, cluster))
-
-    clusters = [heapq.heappop(clusters) for _ in range(len(clusters))]
-    for idx, (total, infor) in enumerate(clusters):
-        min_index = layer1.index(min(layer1))
-        clusters[idx] = (min_index, infor)
-        layer1[min_index] = max(layer1) + 1
-
-    return clusters
