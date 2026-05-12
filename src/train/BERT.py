@@ -30,9 +30,10 @@ class Train_BERT:
             message = pickle.dumps(
                 {"data_id": data_id, "data": output.detach().cpu().numpy(), "label": labels.cpu(), "trace": [self.client_id]}
             )
-        if self.size is None:
-            self.size = len(message)
-            print(f'Length message: {self.size} (bytes).')
+
+        # if self.size is None:
+        #     self.size = len(message)
+        #     print(f'Length message: {self.size} (bytes).')
 
         self.channel.basic_publish(
             exchange='',

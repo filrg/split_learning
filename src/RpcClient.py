@@ -19,12 +19,14 @@ class RpcClient:
         self.layer_id = layer_id
         self.channel = channel
         self.model_train = None
+        self.model_name = None
         self.train_loader = None
         self.device = device
 
         self.response = None
         self.model = None
         self.cluster = None
+        self.learning = None
         self.label_count = None
         self.peft_config = None
 
@@ -42,19 +44,19 @@ class RpcClient:
         self.response = pickle.loads(body)
         src.Log.print_with_color(f"[<<<] Client received: {self.response['message']}", "blue")
         action = self.response["action"]
-        state_dict = self.response["parameters"]
 
         if action == "START":
-            model_name = self.response["model_name"]
+            state_dict = self.response["parameters"]
+            self.model_name = self.response["model_name"]
             cut_layers = self.response['layers']
             label_count = self.response['label_count']
             refresh =  self.response['refresh']
             data_name = self.response["data_name"]
-            learning = self.response["learning"]
+            self.learning = self.response["learning"]
 
-            if model_name == 'VGG16':
+            if self.model_name == 'VGG16':
                 self.model_train = Train_VGG16(self.client_id, self.layer_id, self.channel, self.device)
-            elif model_name == 'BERT':
+            elif self.model_name == 'BERT':
                 self.model_train = Train_BERT(self.client_id, self.layer_id, self.channel, self.device)
                 self.peft_config = LoraConfig(
                     task_type="SEQ_CLS",
@@ -62,7 +64,7 @@ class RpcClient:
                     bias="none",
                     target_modules=["query", "key", "value", "dense"]
                 )
-            elif model_name == 'KWT':
+            elif self.model_name == 'KWT':
                 self.model_train = Train_KWT(self.client_id, self.layer_id, self.channel, self.device)
 
             if self.label_count is None:
@@ -73,28 +75,28 @@ class RpcClient:
                 src.Log.print_with_color(f"Label distribution of client: {self.label_count}", "yellow")
 
             # Load model
-            if self.model is None:
-                if model_name == 'BERT':
-                    klass = BERT_AGNEWS
-                elif model_name == 'KWT':
-                    klass = KWT_SPEECHCOMMANDS
-                else:
-                    klass = VGG16_CIFAR10
+            self.model = None
+            if self.model_name == 'BERT':
+                klass = BERT_AGNEWS
+            elif self.model_name == 'KWT':
+                klass = KWT_SPEECHCOMMANDS
+            else:
+                klass = VGG16_CIFAR10
 
-                if cut_layers[1] != 0:
-                    if cut_layers[1] == -1:
-                        self.model = klass(start_layer=cut_layers[0])
-                    else:
-                        self.model = klass(start_layer=cut_layers[0], end_layer=cut_layers[1])
+            if cut_layers[1] != 0:
+                if cut_layers[1] == -1:
+                    self.model = klass(start_layer=cut_layers[0])
                 else:
-                    self.model = klass()
+                    self.model = klass(start_layer=cut_layers[0], end_layer=cut_layers[1])
+            else:
+                self.model = klass()
 
-            batch_size = learning["batch-size"]
+            batch_size = self.learning["batch-size"]
 
             if state_dict:
                 self.model.load_state_dict(state_dict)
 
-            if model_name == 'BERT':
+            if self.model_name == 'BERT':
                 self.model = get_peft_model(self.model, self.peft_config)
                 if self.layer_id == 2:
                     for param in self.model.layer15.classifier.parameters():
@@ -102,17 +104,21 @@ class RpcClient:
 
             self.model.to(self.device)
 
-            # Start training
             if self.layer_id == 1:
                 if (self.train_loader is None) or refresh:
                     self.train_loader = data_loader(data_name, batch_size, self.label_count, train=True)
 
-                result, size = self.model_train.train_on_first_layer(self.model, learning, self.train_loader, self.cluster)
+            return True
+
+        elif action == 'SYN':
+            # Start training
+            if self.layer_id == 1:
+                result, size = self.model_train.train_on_first_layer(self.model, self.learning, self.train_loader, self.cluster)
             else:
-                result, size = self.model_train.train_on_last_layer(self.model, learning, self.cluster)
+                result, size = self.model_train.train_on_last_layer(self.model, self.learning, self.cluster)
 
             # Stop training, then send parameters to server
-            if model_name == 'BERT':
+            if self.model_name == 'BERT':
                 self.model = self.model.merge_and_unload()
 
             model_state_dict = copy.deepcopy(self.model.state_dict())

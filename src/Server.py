@@ -2,6 +2,7 @@ import torch
 import os
 import random
 import pika
+import time
 import pickle
 import sys
 import numpy as np
@@ -129,6 +130,7 @@ class Server:
                 src.Log.print_with_color(f'List cut point: {self.list_cut_layers}', 'yellow')
                 src.Log.print_with_color(f'Infor clusters: {self.infor_cluster}', 'yellow')
 
+                self.logger.log_info(f"{self.learning}")
                 self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
                 self.notify_clients()
 
@@ -177,28 +179,31 @@ class Server:
                         self.global_client_sizes[i] = [[] for _ in range(len(self.total_clients))]
                 self.current_clients = [0 for _ in range(len(self.total_clients))]
                 # Test
-                if self.save_parameters and self.validation and self.round_result:
+                if self.save_parameters and self.round_result:
                     state_dict_full = self.concatenate_and_avg_clusters()
-                    self.avg_state_dict = [[] for _ in range(self.num_cluster)]
-                    if not get_val(self.model_name, self.data_name, state_dict_full,self.logger):
-                        self.logger.log_warning("Training failed!")
+                    if self.validation:
+                        if not get_val(self.model_name, self.data_name, state_dict_full,self.logger):
+                            self.logger.log_warning("Training failed!")
+                            self.round = 0
+                        else:
+                            # Save to files
+                            torch.save(state_dict_full, f'{self.model_name}_{self.data_name}.pth')
+                            self.round -= 1
                     else:
-                        # Save to files
                         torch.save(state_dict_full, f'{self.model_name}_{self.data_name}.pth')
                         self.round -= 1
                 else:
                     self.round -= 1
 
-                # Start a new training round
+                self.avg_state_dict = [[] for _ in range(self.num_cluster)]
+
                 self.round_result = True
 
                 if self.round > 0:
                     self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
 
-                    if self.save_parameters:
-                        self.notify_clients()
-                    else:
-                        self.notify_clients(register=False)
+                    self.notify_clients()
+
                 else:
                     self.logger.log_info("Stop training !!!")
                     self.notify_clients(start=False)
@@ -206,107 +211,91 @@ class Server:
 
         ch.basic_ack(delivery_tag=method.delivery_tag)
 
-    def notify_clients(self, start=True, register=True, cluster=None):
-        if cluster is not None:
-            for (client_id, layer_id, _, clustering,_, train) in self.list_clients:
-                if train is True:
-                    if clustering == cluster:
-                        if layer_id == 1:
-                            layers = [0, self.list_cut_layers[cluster][0]]
-                        elif layer_id == len(self.total_clients):
-                            layers = [self.list_cut_layers[cluster][-1], -1]
-                        else:
-                            layers = [self.list_cut_layers[cluster][layer_id - 2],
-                                      self.list_cut_layers[cluster][layer_id - 1]]
-                        src.Log.print_with_color(f"[>>>] Sent start training request to client {client_id}", "red")
+    def notify_clients(self, start=True):
 
-                        response = {"action": "START",
-                                    "message": "Server accept the connection!",
-                                    "parameters": copy.deepcopy(self.avg_state_dict[cluster][layer_id - 1]),
-                                    "layers": layers,
-                                    "model_name": self.model_name,
-                                    "data_name": self.data_name,
-                                    "learning": self.learning,
-                                    "refresh": self.refresh,
-                                    "label_count": None,
-                                    "cluster": cluster}
+        for (client_id, layer_id, _, clustering, label, train) in self.list_clients:
 
-                        self.send_to_response(client_id, pickle.dumps(response))
-        else:
-            for (client_id, layer_id, _, clustering, label, train) in self.list_clients:
+            filepath = f'{self.model_name}_{self.data_name}.pth'
+            state_dict = None
 
-                filepath = f'{self.model_name}_{self.data_name}.pth'
-                state_dict = None
-
-                if start:
-                    if layer_id == 1:
-                        layers = [0, self.list_cut_layers[clustering][0]]
-                    elif layer_id == len(self.total_clients):
-                        layers = [self.list_cut_layers[clustering][-1], -1]
-                    else:
-                        layers = [self.list_cut_layers[clustering][layer_id - 2],
-                                  self.list_cut_layers[clustering][layer_id - 1]]
-
-                    if self.load_parameters and register:
-                        if os.path.exists(filepath):
-                            full_state_dict = torch.load(filepath, weights_only=True)
-
-                            if self.model_name == "BERT":
-                                klass = BERT_AGNEWS
-                            elif self.model_name == "KWT":
-                                klass = KWT_SPEECHCOMMANDS
-                            else:
-                                klass = VGG16_CIFAR10
-
-                            if layer_id == 1:
-                                if layers == [0, 0]:
-                                    model = klass()
-                                else:
-                                    model = klass(end_layer=layers[1])
-                            elif layer_id == len(self.total_clients):
-                                model = klass(start_layer=layers[0])
-                            else:
-                                model = klass(start_layer=layers[0], end_layer=layers[1])
-                            state_dict = model.state_dict()
-                            keys = state_dict.keys()
-
-                            for key in keys:
-                                state_dict[key] = full_state_dict[key]
-
-                            src.Log.print_with_color(f"Load model {filepath}.pth successfully", "green")
-                        else:
-                            src.Log.print_with_color(f"File {filepath} does not exist.", "yellow")
-
-                    src.Log.print_with_color(f"[>>>] Sent start training request to client {client_id}", "red")
-                    if train is True:
-                        response = {"action": "START",
-                                    "message": "Server accept the connection!",
-                                    "parameters": copy.deepcopy(state_dict),
-                                    "layers": layers,
-                                    "model_name": self.model_name,
-                                    "data_name": self.data_name,
-                                    "learning": self.learning,
-                                    "label_count": label,
-                                    "refresh": self.refresh,
-                                    "cluster": clustering}
-                        self.send_to_response(client_id, pickle.dumps(response))
-
-                    else:
-                        if self.reject is False:
-                            response = {"action": "STOP",
-                                        "message": "Reject Device",
-                                        "parameters": None}
-
-                            self.send_to_response(client_id, pickle.dumps(response))
-
+            if start:
+                if layer_id == 1:
+                    layers = [0, self.list_cut_layers[clustering][0]]
+                elif layer_id == len(self.total_clients):
+                    layers = [self.list_cut_layers[clustering][-1], -1]
                 else:
-                    src.Log.print_with_color(f"[>>>] Sent stop training request to client {client_id}", "red")
-                    response = {"action": "STOP",
-                                "message": "Stop training!",
-                                "parameters": None}
+                    layers = [self.list_cut_layers[clustering][layer_id - 2],
+                              self.list_cut_layers[clustering][layer_id - 1]]
+
+                if self.save_parameters:
+                    if os.path.exists(filepath):
+                        full_state_dict = torch.load(filepath, weights_only=True)
+
+                        if self.model_name == "BERT":
+                            klass = BERT_AGNEWS
+                        elif self.model_name == "KWT":
+                            klass = KWT_SPEECHCOMMANDS
+                        else:
+                            klass = VGG16_CIFAR10
+
+                        if layer_id == 1:
+                            if layers == [0, 0]:
+                                model = klass()
+                            else:
+                                model = klass(end_layer=layers[1])
+                        elif layer_id == len(self.total_clients):
+                            model = klass(start_layer=layers[0])
+                        else:
+                            model = klass(start_layer=layers[0], end_layer=layers[1])
+                        state_dict = model.state_dict()
+                        keys = state_dict.keys()
+
+                        for key in keys:
+                            state_dict[key] = full_state_dict[key]
+
+                        src.Log.print_with_color(f"Load model {filepath} successfully", "green")
+                    else:
+                        src.Log.print_with_color(f"File {filepath} does not exist.", "yellow")
+
+                src.Log.print_with_color(f"[>>>] Sent start training request to client {client_id}", "red")
+                if train is True:
+                    response = {"action": "START",
+                                "message": "Server accept the connection!",
+                                "parameters": copy.deepcopy(state_dict),
+                                "layers": layers,
+                                "model_name": self.model_name,
+                                "data_name": self.data_name,
+                                "learning": self.learning,
+                                "label_count": label,
+                                "refresh": self.refresh,
+                                "cluster": clustering}
                     self.send_to_response(client_id, pickle.dumps(response))
 
-            self.reject = True
+                else:
+                    if self.reject is False:
+                        response = {"action": "STOP",
+                                    "message": "Reject Device",
+                                    "parameters": None}
+
+                        self.send_to_response(client_id, pickle.dumps(response))
+
+            else:
+                src.Log.print_with_color(f"[>>>] Sent stop training request to client {client_id}", "red")
+                response = {"action": "STOP",
+                            "message": "Stop training!",
+                            "parameters": None}
+                self.send_to_response(client_id, pickle.dumps(response))
+
+        time.sleep(25)
+        if start:
+            for (client_id, _, _, _, _, train) in self.list_clients:
+                if train:
+                    response = {"action": "SYN",
+                                "message": "Synchronize client devices",
+                                }
+                    self.send_to_response(client_id, pickle.dumps(response))
+
+        self.reject = True
 
     def cluster_and_selection(self):
         # Clustering only device in first layer
@@ -385,7 +374,7 @@ class Server:
                     self.list_clients[idx] = (client_id, layer_id, profile, 0, label, True)
                 self.num_cluster = 1
                 self.infor_cluster = [self.total_clients]
-                self.list_cut_layers = self.manual["no-cluster"]["cut-layers"]
+                self.list_cut_layers = [self.manual["no-cluster"]["cut-layers"]]
 
         self.global_model_parameters = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]
         self.global_client_sizes = [[[] for _ in range(len(self.total_clients))] for _ in range(self.num_cluster)]

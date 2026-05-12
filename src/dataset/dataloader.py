@@ -8,27 +8,22 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from transformers import BertTokenizer
-from datasets import load_dataset
 
+import pandas as pd
 from src.dataset.AGNEWS import AGNEWS_DATASET
 from src.dataset.SPEECHCOMMANDS import SpeechCommandsDataset
 
 def AGNEWS(batch_size=None, distribution=None, train=True):
-    cache_dir = './hf_cache'
-    print(f"Loading AGNEWS dataset with cache_dir={cache_dir}...")
-    dataset = load_dataset(
-        'ag_news',
-        download_mode='reuse_dataset_if_exists',
-        cache_dir=cache_dir
-    )
-    print("Dataset loaded successfully.")
+
     tokenizer = BertTokenizer.from_pretrained('bert-base-cased')
 
     if train:
-        train_data = dataset['train']
+        train_data = pd.read_csv("./data/AGNEWS_TRAIN.csv")
         train_target_counts = {k: v for k, v in enumerate(distribution)}
         train_by_class = defaultdict(list)
-        for text, label in zip(train_data['text'], train_data['label']):
+        train_texts = train_data["text"].tolist()
+        train_labels = train_data["label"].tolist()
+        for text, label in zip(train_texts, train_labels):
             train_by_class[label].append((text, label))
 
         train_texts, train_labels = [], []
@@ -42,11 +37,13 @@ def AGNEWS(batch_size=None, distribution=None, train=True):
         train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
         return train_loader
     else:
-        test_data = dataset['test']
+        test_data = pd.read_csv("./data/AGNEWS_TEST.csv")
         distribution = [500, 500, 500, 500]
         test_target_counts = {k: v for k, v in enumerate(distribution)}
         test_by_class = defaultdict(list)
-        for text, label in zip(test_data['text'], test_data['label']):
+        test_texts = test_data["text"].tolist()
+        test_labels = test_data["label"].tolist()
+        for text, label in zip(test_texts, test_labels):
             test_by_class[label].append((text, label))
 
         test_texts, test_labels = [], []
@@ -58,7 +55,7 @@ def AGNEWS(batch_size=None, distribution=None, train=True):
         print("Test samples:", len(test_texts), {l: test_labels.count(l) for l in set(test_labels)})
 
         test_set = AGNEWS_DATASET(test_texts, test_labels, tokenizer, max_length=128)
-        test_loader = DataLoader(test_set, batch_size=50, shuffle=False)
+        test_loader = DataLoader(test_set, batch_size=20, shuffle=False)
         return test_loader
 
 def CIFAR10(batch_size=None, distribution=None, train=True):
