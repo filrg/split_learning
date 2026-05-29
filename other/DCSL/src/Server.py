@@ -32,6 +32,7 @@ class Server:
         self.validation = config["server"]["validation"]
 
         # Clients
+        self.learning = config["learning"]
         self.batch_size = config["learning"]["batch-size"]
         self.lr = config["learning"]["learning-rate"]
         self.momentum = config["learning"]["momentum"]
@@ -133,6 +134,7 @@ class Server:
                         self.device_stop.append((client_id, layer_id, cluster))
                 self.distribution()
                 src.Log.print_with_color("All clients are connected. Sending notifications.", "green")
+                self.logger.log_info(f"{self.learning}")
                 self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
                 self.current_lr = self.lr
                 self.sda_size = max(self.info_cluster) if self.info_cluster else 1
@@ -266,7 +268,6 @@ class Server:
                         state_dict = model.state_dict()
                         keys = state_dict.keys()
 
-                        print(full_state_dict.keys())
                         for key in keys:
                             if key in full_state_dict.keys():
                                 state_dict[key] = full_state_dict[key]

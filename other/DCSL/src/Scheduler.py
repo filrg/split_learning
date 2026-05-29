@@ -67,10 +67,10 @@ class Scheduler:
                                    body=pickle.dumps(message))
 
     def train_on_first_layer(self, model, lr, momentum, train_loader=None, local_round=3, layer2_devices=None, model_name=None):
-        if model_name == 'BERT':
-            optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-        else:
+        if model_name == 'VGG16':
             optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+        else:
+            optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
 
         backward_queue_name = f'gradient_queue_{self.layer_id}_{self.client_id}'
         self.channel.queue_declare(queue=backward_queue_name, durable=False)
@@ -191,10 +191,10 @@ class Scheduler:
         return result
 
     def train_on_last_layer(self, model, lr, momentum, sda_size=1, model_name=None):
-        if model_name == 'BERT':
-            optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
-        else:
+        if model_name == 'VGG16':
             optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum)
+        else:
+            optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
         result = True
         criterion = nn.CrossEntropyLoss()
 

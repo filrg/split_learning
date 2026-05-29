@@ -1,7 +1,7 @@
 import torch
 
 class AGNEWS_DATASET(torch.utils.data.Dataset):
-    def __init__(self, texts, labels, tokenizer, max_length=128):
+    def __init__(self, texts, labels, tokenizer, max_length=64):
         self.texts = texts
         self.labels = labels
         self.tokenizer = tokenizer

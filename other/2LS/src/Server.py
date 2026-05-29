@@ -79,28 +79,8 @@ class Server:
 
     def distribution(self):
         if self.non_iid:
-            if self.data_name == "AGNEWS":
-                label_distribution = np.array([[0.75, 0.0, 0.0, 0.25],
-                                               [0.75, 0.0, 0.0, 0.25],
-                                               [0.75, 0.0, 0.0, 0.25],
-                                               [0.0, 0.75, 0.0, 0.25],
-                                               [0.0, 0.75, 0.0, 0.25],
-                                               [0.0, 0.75, 0.0, 0.25],
-                                               [0.0, 0.0, 0.75, 0.25],
-                                               [0.0, 0.0, 0.75, 0.25],
-                                               [0.0, 0.0, 0.75, 0.25],
-                                               ])
-            else:
-                 label_distribution = np.array([[0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1],
-                                               [0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1],
-                                               [0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.1],
-                                               [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.1],
-                                               [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.1],
-                                               [0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.0, 0.0, 0.0, 0.1],
-                                               [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.1],
-                                               [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.1],
-                                               [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 0.3, 0.3, 0.1],
-                                               ])
+            label_distribution = np.random.dirichlet(
+                [1.0] * self.num_label, self.total_clients[0])
 
             self.label_counts = (label_distribution * self.num_sample).astype(int)
         else:
@@ -130,6 +110,7 @@ class Server:
                 self.distribution()
                 self.set_up()
 
+                self.logger.log_info(f"{self.learning}")
                 self.logger.log_info(f"Start training round {self.global_round - self.round + 1}")
                 src.Log.print_with_color(f"Start training round {self.global_round - self.round + 1}", "yellow")
 

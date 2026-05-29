@@ -33,7 +33,7 @@ def AGNEWS(batch_size=None, distribution=None, train=True):
             train_labels.extend([l for _, l in samples])
         print("Train samples:", len(train_texts), {l: train_labels.count(l) for l in set(train_labels)})
 
-        train_set = AGNEWS_DATASET(train_texts, train_labels, tokenizer, max_length=128)
+        train_set = AGNEWS_DATASET(train_texts, train_labels, tokenizer, max_length=64)
         train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
         return train_loader
     else:
@@ -54,8 +54,8 @@ def AGNEWS(batch_size=None, distribution=None, train=True):
 
         print("Test samples:", len(test_texts), {l: test_labels.count(l) for l in set(test_labels)})
 
-        test_set = AGNEWS_DATASET(test_texts, test_labels, tokenizer, max_length=128)
-        test_loader = DataLoader(test_set, batch_size=20, shuffle=False)
+        test_set = AGNEWS_DATASET(test_texts, test_labels, tokenizer, max_length=64)
+        test_loader = DataLoader(test_set, batch_size=10, shuffle=False)
         return test_loader
 
 def CIFAR10(batch_size=None, distribution=None, train=True):

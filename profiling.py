@@ -58,7 +58,7 @@ def profiling(model_name=None, size=4):
     elif model_name == 'BERT':
         model = BERT_AGNEWS().to(device)
         register_hooks(model, profile)
-        x = torch.randn(size, 128).to(device)
+        x = torch.randint(0, 28996, (size, 64)).to(device)
     else:
         model = KWT_SPEECHCOMMANDS().to(device)
         register_hooks(model, profile)

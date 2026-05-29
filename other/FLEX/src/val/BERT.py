@@ -31,7 +31,7 @@ def val_BERT(data_name, state_dict_full, logger):
         acc = correct / total
         avg_loss = total_loss / len(test_loader)
 
-    print(f"Test Loss: {avg_loss:.2f}; Test Acc: {acc:.2f}")
+    print(f"Test Loss: {avg_loss:.4f}; Test Acc: {acc:.4f}")
 
-    logger.log_info(f"Test Loss: {avg_loss:.2f}; Test Acc: {acc:.2f}")
+    logger.log_info(f"Test Loss: {avg_loss:.4f}; Test Acc: {acc:.4f}")
 

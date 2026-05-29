@@ -77,18 +77,18 @@ class Server:
 
     def distribution(self):
         if self.non_iid:
-            # Bert
+
             label_distribution = np.array([
-                [0.75, 0.0, 0.0, 0.25],
-                [0.0, 0.75, 0.0, 0.25],
-                [0.75, 0.0, 0.0, 0.25],
-                [0.0, 0.75, 0.0, 0.25],
-                [0.0, 0.0, 0.75, 0.25],
-                [0.0, 0.75, 0.0, 0.25],
-                [0.0, 0.0, 0.75, 0.25],
-                [0.75, 0.0, 0.0, 0.25],
-                [0.0, 0.0, 0.75, 0.25],]
-            )
+                [0.8298, 0.0561, 0.0505, 0.0636],
+                [0.0400, 0.8392, 0.0400, 0.0808],
+                [0.1009, 0.0562, 0.4350, 0.4079],
+                [0.8202, 0.0769, 0.0500, 0.0530],
+                [0.0900, 0.0898, 0.4126, 0.4076],
+                [0.0618, 0.7984, 0.0798, 0.0618],
+                [0.0712, 0.8054, 0.0603, 0.0631],
+                [0.0601, 0.0579, 0.4228, 0.4529],
+                [0.8243, 0.0500, 0.0757, 0.0500]
+            ])
 
             self.label_counts = (label_distribution * self.num_sample).astype(int)
         else:
@@ -118,6 +118,7 @@ class Server:
 
                 self.distribution()
                 self.cluster_and_selection()
+                self.logger.log_info(f"{self.learning}")
                 src.Log.print_with_color(f'List cut point: {self.cut_layer}', 'yellow')
                 src.Log.print_with_color(f'Infor clusters: {self.infor_cluster}', 'yellow')
 
@@ -199,13 +200,13 @@ class Server:
 
                 if self.round <= self. global_round:
                     self.logger.log_info(f"Start training round {self.round}")
-                    if self.round % self.t_g == 0:
+                    if self.round % self.t_g == 1:
                         self.notify_clients()
                     elif self.round % self.t_c == 0:
 
-                        self.notify_clients(subround=True,update=True)
-                    else:
                         self.notify_clients(subround=True,update=False)
+                    else:
+                        self.notify_clients(subround=True,update=True)
                 else:
                     self.logger.log_info("Stop training !!!")
                     self.notify_clients(start=False)
