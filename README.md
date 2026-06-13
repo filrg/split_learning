@@ -4,44 +4,72 @@
 ![PyTorch](https://img.shields.io/badge/PyTorch-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
 ![RabbitMQ](https://img.shields.io/badge/RabbitMQ-FF6600?style=for-the-badge&logo=rabbitmq&logoColor=white)
 
-**Split learning** is a method of distributed deep learning training, where a machine learning model is split into multiple parts and trained across multiple machines or devices without needing to share the full data or model. This ensures the security and privacy of data, particularly in applications requiring privacy protection such as healthcare, finance, or when devices lack the computational resources to train the full model.
+**Split Learning** is a distributed deep learning training framework where a deep neural network (DNN) model is partitioned into multiple parts and trained across a server and multiple client devices without sharing raw data or the entire model. This ensures data security and privacy, especially for resource-constrained edge devices.
 
-### How Split Learning Works:
-- **Model splitting**: The deep learning model is divided into two (or more) parts. For example, part of the model may run on the user device (edge device), while the controller function run on the server.
-- **Communication process**:
-  - The user device trains a portion of the model based on its local data or data from another device and sends the intermediate activations to the next layer's machine instead of sending the full data.
-  - The clients at the last layers will calculate the backward pass and return the corresponding gradients to the user device to update the part of the model. This process repeats until the model completes training.
-  - After completing a training round, the server receives the parameters from the clients and continues distributing the new model to the necessary clients for the next round.
+This repository implements **Cluster SFL** (Split Federated Learning), a framework that optimizes split learning across heterogeneous devices by clustering clients with similar data distributions and capabilities, filtering out slow/unreliable devices (stragglers), and adaptively adjusting partition points (cut-layers) for each cluster.
 
-### Advantages of Split Learning:
-- **Privacy protection**: Sensitive data does not need to be fully transferred between devices and servers. Instead, only the intermediate activations are shared.
-- **Resource-saving**: Devices with limited computational resources (such as mobile phones) can share the load and jointly train a smaller portion of the model compared to the original DNN.
-- **Model scalability**: Split learning allows the model to be split across multiple devices, extending the capability to handle larger models.
+---
 
-## Deployment Model
+## Key Features & Framework Components
+
+**Cluster SFL** addresses issues such as Non-IID data distribution, device heterogeneity, and communication overhead through three core components:
+
+1. **Privacy-Preserving Client Clustering**: Clients' local data distributions are compressed and represented using a Privacy-Preserving Variational Autoencoder (VAE) before clustering, optimizing training performance on Non-IID datasets without exposing raw local data.
+2. **GMM-Based Client Selection**: Outliers and slow devices (stragglers) are identified and excluded from the training round using a Gaussian Mixture Model (GMM) that analyzes client computation and communication speeds.
+3. **Adaptive Partitioning**: For each client cluster, the framework automatically identifies the optimal model partition point (cut-layer) to balance client-side computation costs and communication overhead.
+
+### Three Execution Modes:
+- **No-Cluster Mode (`server.auto-mode: False` & `server.manual.cluster-mode: False`)**: Uses a single static partition point defined globally in `server.manual.no-cluster.cut-layers`.
+- **Manual Cluster Mode (`server.auto-mode: False` & `server.manual.cluster-mode: True`)**: Performs manual clustering based on static assignment in `server.manual.cluster`.
+- **Auto Cluster Mode (`server.auto-mode: True`)**: Performs dynamic client clustering using KMeans, optional GMM-based client selection, and adaptive partition point computation per cluster.
+
+---
+
+## System Architecture
+
+### Deployment Model
+The system consists of a central coordinator (Server) and multiple training nodes (Clients). They communicate asynchronously over RabbitMQ queues.
 
 ![deploy_model](pics/deploy_model.png)
 
-To deploy the service, each blocks in the system (server and clients) need to ensure the following requirements:
-- All must be successfully connected to the same queue server, which serves as the main communication hub for the entire system.
-- The server must be correctly configured with the topology and the DNN model loaded.
-- The clients must synchronize with each other when the model is split and joined according to the topology agreed upon with the server.
+To run the system:
+1. All server and client processes must connect to the same **RabbitMQ server**.
+2. The **Server** manages the global training process, clusters clients, executes the server portion of the model, aggregates weights, and coordinates optimization.
+3. The **Clients** load the client portion of the model, process local data to compute forward activations (smashed data), send them to the server, and receive gradients back to compute backward passes and update local weights.
 
-Clients training flow:
+### Split Learning Client Training Flow
+Below is the message-based communication cycle between the client and server during training:
 
 ![sl_model](pics/sl_model.png)
 
-## Required Packages
+---
+
+## Supported Models & Datasets
+
+The framework supports multiple DNN models across various modalities:
+
+| Model Name | Dataset | Task Type | Key Modules / Layers |
+| :--- | :--- | :--- | :--- |
+| **VGG16** | `CIFAR10` | Image Classification | Convolutional, Linear |
+| **KWT**  | `SPEECHCOMMANDS` | Audio Classification | Audio processing, Transformer |
+| **BERT** | `AGNEWS` | Text Classification | NLP Transformer, LoRA / PEFT |
+
+---
+
+## Installation & Setup
+
+### 1. Python Prerequisites
+Clone the repository and install the dependencies:
+```bash
+pip install -r requirements.txt
 ```
-torch
-torchvision
-pika
-tqdm
-pyyaml
+*Note: If you are training BERT, you also need to install `peft` and `transformers`:*
+```bash
+pip install peft transformers
 ```
 
-Set up a RabbitMQ server for message communication over the network environment. `docker-compose.yaml` file:
-
+### 2. RabbitMQ Broker
+Setup a RabbitMQ server. A `docker-compose.yaml` is provided to run it easily:
 ```yaml
 version: '3'
 
@@ -53,8 +81,8 @@ services:
       - "5672:5672"   # RabbitMQ main port
       - "15672:15672" # Management UI
     environment:
-      RABBITMQ_DEFAULT_USER: user
-      RABBITMQ_DEFAULT_PASS: password
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
 volumes:
@@ -62,127 +90,156 @@ volumes:
     driver: local
 ```
 
-Then run the RabbitMQ container
-
-```commandline
+Start the RabbitMQ container:
+```bash
 docker-compose up -d
 ```
+Access the Management UI at `http://localhost:15672` (Credentials: `admin`/`admin` by default).
 
-## Configuration
+---
 
-Application configuration is in the `config.yaml` file:
+## Step-by-Step Quick Start
+
+Follow these steps in order to start training.
+
+### Step 1: Run Profiling on Clients 
+Before running a client, you **MUST** profile its performance. The client profiles its computation speed (execution time per layer) and network latency, writing these metrics to `profiling.json`. If this file is missing, the client cannot register with the server.
+
+Run the profiling tool on each client machine:
+```bash
+python profiling.py --model KWT --size 32
+```
+Arguments:
+- `--model`: The target model (`VGG16`, `KWT`, or `BERT`).
+- `--size` *(Optional)*: Batch size used for profiling (e.g., `32` or `4` for BERT).
+
+### Step 2: Configure the System (`config.yaml`)
+Edit the configuration settings in `config.yaml`. (See the **Configuration Reference** section below).
+
+### Step 3: Start the Server
+Run the central server:
+```bash
+python server.py
+```
+*Note: The server will automatically clean up stale queues from previous runs on startup.*
+
+### Step 4: Start the Clients
+Run the clients. Make sure the total number of clients matches what is configured in `config.yaml`.
+
+```bash
+python client.py --layer_id 1 --device cuda --cluster 0
+```
+Arguments:
+- `--layer_id`: The client split layer index (starts from `1`).
+- `--device` *(Optional)*: Hardware device to use (`cpu`, `cuda`, or `cuda:0`). If omitted, PyTorch will automatically use CUDA if available.
+- `--cluster` *(Optional)*: Manually assign the client to a specific cluster ID (starts from `0`). Only relevant if auto-clustering is disabled.
+
+---
+
+## Configuration Reference (`config.yaml`)
+
+Below is the annotation for the version 3.0.0 `config.yaml` schema:
 
 ```yaml
 name: Split Learning
-server:  # server configuration
-  local-round: 1 
-  global-round: 1
-  clients: # all devices in system
-    - 2
-    - 2 # layer 1 has 2 devices, layer 2 has 2 devices
-  no-cluster: 
-    cut-layers: [7] # general cut-point 
-  cluster: 
-    num-cluster: 1 # number of cluster
-    cut-layers:
-      - [7] # cut-point in cluster 0
-      - [14] # cut-point in cluster 1
-    infor-cluster:
-      - [1,1] # cluster 0 has 1 device in layer 1 and 1 client in layer 2
-      - [1,1] # cluster 1 has 1 device in layer 1 and 1 client in layer 2
-  model: VGG16 # model name
-  data-name: CIFAR10  # training data: MNIST, CIFAR10
-  parameters:
-    load: False  # allow to load parameters file
-    save: False # allow to save parameters file
-                # if turn on, server will be averaging all parameters
-  validation: False # allow to validate on server-side
-  data-distribution: # data distribution config
-    num-label: 10 # number of label in dataset
-    num-data-range: # minimum and maximum number of label's data
-      - 250
-      - 250
-    non-iid-rate: 1 # non-IID rate, range (0, 1]
-    refresh-each-round: True # if set True, non-IID on label will be reset on each round
-  random-seed: 1
-  client-cluster: # mode cluster configuration
-    enable: False # run cluster
-    auto-partition: False # use algorithm cluster
-    syn-cut-layers: False 
-    special: False # use mode only aggregate layer 1
-    cluster: AffinityPropagation # choose cluster algorithm 
-    AffinityPropagation: # cluster algorithm configuration
-      damping: 0.9
-      max_iter: 1000
 
-rabbit: # RabbitMQ connection configuration
+server:
+  global-round: 10 # number of training rounds
+  
+  clients: # number of clients per layer (e.g. [1, 1] means 1 client in layer 1, 1 client in layer 2)
+    - 1
+    - 1
+    
+  auto-mode: False # True to enable auto-clustering (KMeans) and client selection, False to use manual/no-cluster mode
+  
+  model: KWT               # target model: VGG16, KWT, BERT
+  data-name: SPEECHCOMMANDS # target dataset: CIFAR10, SPEECHCOMMANDS, AGNEWS
+  
+  parameters:
+    load: True  # load saved weights (.pth) if exist on server startup
+    save: True  # save aggregated weights (.pth) after each round
+    
+  validation: True # run evaluation on server
+  
+  data-distribution:
+    non-iid: False      # enable non-IID partitioning
+    num-sample: 5000    # samples per client
+    num-label: 12       # classes in dataset (e.g. 10 for CIFAR10, 12 for SPEECHCOMMANDS, 4 for AGNEWS)
+    dirichlet:
+      alpha: 1          # Dirichlet alpha parameter for non-IID data
+    refresh: True       # regenerate data indices each round
+
+  random-seed: 1
+  
+  manual:
+    cluster-mode: False # True to enable manual cluster configuration, False to run without clustering
+    no-cluster:
+      cut-layers: [1] # split layer index for no-cluster mode
+    cluster:
+      num-cluster: 1
+      cut-layers:
+        - [1] # cut-points for each cluster
+      infor-cluster:
+        - [1,1] # [layer-1, layer-2] clients per cluster
+
+  cluster-selection:
+    num-cluster: 1 # number of clusters for KMeans in auto-mode
+    algorithm-cluster: KMeans # clustering algorithm (only KMeans is supported in the main codebase)
+    selection-mode: False # True to enable GMM-based client selection to filter out stragglers
+
+rabbit:
   address: 127.0.0.1
   username: admin
   password: admin
-  virtual-host: \
+  virtual-host: / # RabbitMQ virtual host
 
 log_path: .
 debug_mode: True
 
 learning:
-  learning-rate: 0.01
+  learning-rate: 0.0005
+  weight-decay: 0.01 # weight decay (L2 penalty)
   momentum: 0.5
   batch-size: 32
   control-count: 3
 ```
 
-This configuration is use for server.
+---
 
-### List of DNN model
+## Model Parameters (`.pth` Files)
 
-For `server.model` field:
-
-```
-VGG16
-```
-
-## How to Run
-
-Alter your configuration, you need to run the server to listen and control the request from clients.
-
-### Server
-
-```commandline
-python server.py
-```
-
-### Client
-
-Now, when server is ready, run clients simultaneously with total number of client that you defined.
-
-**Layer 1**
-
-```commandline
-python client.py --layer_id 1 --performance 0
-```
-
-Where:
-- `--layer_id` is the ID index of client's layer, start from 1.
-- `--performance` is the performance of device 
-If you want to use a specific device configuration for the training process, declare it with the `--device` argument when running the command line:
-
-```commandline
-python client.py --layer_id 1 --performance 0 --device cpu
-```
-
-## Parameter Files
-
-On the server, the `*.pth` files are saved in the main execution directory of `server.py` after completing one training round.
-
-If the `*.pth` file exists, the server will read the file and send the parameters to the clients. Otherwise, if the file does not exist, a new DNN model will be created with fresh parameters. Therefore, if you want to reset the training process, you should delete the `*.pth` files.
+After completing a training round, the server aggregates client weights and saves the model checkpoint as `.pth` files in the main directory.
+- If `parameters.load` is `True` and the files exist, they will be loaded on startup to resume training.
+- To reset or start training from scratch, set `parameters.load` to `False` or delete the `.pth` files.
 
 ---
 
-Version 3.0.0
+## Baselines (other/)
 
-The application is under development...
+The repository includes baseline algorithms for benchmarking in the `other/` directory:
 
-TODO:
-- Inference mode and training mode
-- Delete all queues alter finish
-- Create close connection request
+| Directory | Baseline Name | Architecture Description |
+| :--- | :--- | :--- |
+| `Vanilla_SL` | Parallel Split Learning | Standard parallel Split Learning. Static partition, no clustering, all clients train sequentially or concurrently. |
+| `Cluster_FSL` | Cluster Split Federated Learning | Sequential training per cluster with manual clustering. No adaptive partitioning. |
+| `DCSL` | Data-Center Split Learning | Batch-synchronous training with step-based Learning Rate decay and Server-side Data Aggregation (SDA). |
+| `2LS` | Two-Layer Split Learning | Hierarchical 2-stage clustering (outer/inner), async communication (FedAsync), and SDA at the server. |
+| `FLEX` | FLEX Framework | Dynamic clustering using label distributions, GMM client selection, and adaptive cut-layer partitioning. |
+
+---
+
+## Publication & Reference
+
+If you use this framework in your research, please cite the original paper:
+
+```text
+Efficient Split Federated Learning via Privacy-Preserving Client Clustering, Resource-Aware Client Selection, and Adaptive Partitioning
+(IEEE Access)
+```
+
+---
+
+## TODOs & Roadmap
+- [ ] Add inference mode interface separate from training flow.
+- [ ] Implement automatic RabbitMQ queue deletion on program finish/exit.
+- [ ] Implement close connection requests to clean up connections gracefully.
