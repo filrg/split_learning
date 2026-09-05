@@ -184,12 +184,12 @@ class Scheduler:
         print('Waiting for intermediate output. To exit press CTRL+C')
         model.to(self.device)
 
-        logger = ZLogger(root="z_store", reduce_spatial="mean")
+        # logger = ZLogger(root="z_store", reduce_spatial="mean")
 
         detection = True
-        det = ZPerLabelRuleDetectorOnline(n_classes=10, per_client_limit=100, store_per_batch=64, baseline_cap=512,
-                                          min_client_points=64, min_baseline_points=128,
-                                          thr_energy=2.5, thr_centroid=2.3, consecutive=10)
+        det = ZPerLabelRuleDetectorOnline(n_classes=10, per_client_limit=400, store_per_batch=64, baseline_cap=512,
+                                          min_client_points=128, min_baseline_points=256,
+                                          thr_energy=2.5, thr_centroid=2.3, consecutive=5)
 
         while True:
             # Training model
@@ -217,9 +217,10 @@ class Scheduler:
                         require_stop = True
                         for l in summary["flagged_labels"]:
                             print({k: per_label[l][k] for k in
-                                   ["energy_ratio", "centroid_ratio", "recent_flags"]})
+                                   ["energy_ratio", "centroid_ratio", "recent_flags",
+                                    "shape_ratio", "shape_diff", "shape_thresholds"]})
 
-                logger.log_batch(client_id=str(trace[-1]).split('-')[0], z=output, y=labels, epoch=self.round)
+                # logger.log_batch(client_id=str(trace[-1]).split('-')[0], z=output, y=labels, epoch=self.round)
 
                 loss = criterion(output, labels)
                 if torch.isnan(loss).any():
